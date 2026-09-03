@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 
 import 'firebase_options.dart';
 import 'core/theme/app_theme.dart';
@@ -27,8 +28,9 @@ class ConstructionApp extends ConsumerWidget {
       locale: const Locale('fa', 'IR'),
       supportedLocales: const [Locale('fa', 'IR')],
       localizationsDelegates: const [
-        // پیش‌فرض‌های Material/Widgets/Cupertino هنگام افزودن
-        // flutter_localizations در Phase بعد اضافه می‌شوند.
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
       ],
       theme: AppTheme.light,
       builder: (context, child) {
