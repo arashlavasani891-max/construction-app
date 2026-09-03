@@ -1,15 +1,13 @@
 name: Build Flutter APK
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - main
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -17,7 +15,14 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: '3.24.0'
+          channel: 'stable'
+          cache: true
+
+      # این مرحله جدید است: چون پوشه android در ریپازیتوری وجود ندارد،
+      # این دستور فقط فایل‌های پلتفرمی گمشده را می‌سازد و به lib/ دست نمی‌زند.
+      - name: Generate missing platform files (android)
+        run: flutter create --platforms=android .
 
       - name: Flutter Pub Get
         run: flutter pub get
@@ -31,5 +36,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-apk
+          name: app-release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
