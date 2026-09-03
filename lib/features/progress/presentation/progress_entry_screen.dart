@@ -59,7 +59,6 @@ class _ProgressEntryScreenState extends ConsumerState<ProgressEntryScreen> {
               onChanged: (v) => setState(() {
                 _selectedItem = v;
                 if (v != null) {
-                  ref.read(progressHistoryProvider); // warm cache (no-op)
                 }
               }),
             ),
