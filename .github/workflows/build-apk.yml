@@ -24,7 +24,7 @@ jobs:
 
       # این مرحله چون پوشه web در ریپازیتوری وجود ندارد اضافه شده است.
       - name: Generate missing platform files (web)
-        run: flutter create --platforms=web .
+        run: flutter create --platforms=web --project-name construction_control .
 
       - name: Flutter Pub Get
         run: flutter pub get
