@@ -1,0 +1,32 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return firestore.get(
+        /databases/(default)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userDoc().get('roleId', '') == 'admin';
+    }
+
+    function hasProjectAccess(projectId) {
+      return isSignedIn() &&
+        (isAdmin() || projectId in userDoc().get('assignedProjectIds', []));
+    }
+
+    match /progress_photos/{projectId}/{fileName} {
+      allow read: if hasProjectAccess(projectId);
+      allow create: if hasProjectAccess(projectId)
+        && request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+  }
+}

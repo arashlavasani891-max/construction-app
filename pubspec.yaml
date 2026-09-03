@@ -1,0 +1,46 @@
+name: construction_control
+description: اپلیکیشن کنترل پروژه ساختمان
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Firebase (Spark/رایگان — بدون Cloud Functions)
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
+  cloud_firestore: ^5.4.4
+  firebase_storage: ^12.3.4
+
+  # State Management
+  flutter_riverpod: ^2.5.1
+
+  # تاریخ شمسی
+  shamsi_date: ^1.1.1
+
+  # نمودار
+  fl_chart: ^0.68.0
+
+  # خروجی فایل
+  excel: ^4.0.6
+  pdf: ^3.11.1
+  printing: ^5.13.2
+  path_provider: ^2.1.4
+  share_plus: ^10.0.2
+
+  # فرم و UI
+  cupertino_icons: ^1.0.8
+  image_picker: ^1.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true

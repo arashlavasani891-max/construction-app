@@ -1,0 +1,155 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------- کمک‌توابع ----------
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function myUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && myUserDoc().get('roleId', '') == 'admin';
+    }
+
+    function hasProjectAccess(projectId) {
+      return isSignedIn() &&
+        (isAdmin() || projectId in myUserDoc().get('assignedProjectIds', []));
+    }
+
+    function hasChecklistAccess(categoryId) {
+      return isSignedIn() &&
+        (isAdmin() || categoryId in myUserDoc().get('assignedChecklistCategoryIds', []));
+    }
+
+    function projectDoc(projectId) {
+      return get(/databases/$(database)/documents/projects/$(projectId)).data;
+    }
+
+    function blockBelongsToProject(blockId, projectId) {
+      return get(/databases/$(database)/documents/blocks/$(blockId)).data.projectId == projectId;
+    }
+
+    function floorBelongsToProject(floorId, projectId) {
+      return get(/databases/$(database)/documents/floors/$(floorId)).data.projectId == projectId;
+    }
+
+    function unitBelongsToProject(unitId, projectId) {
+      return get(/databases/$(database)/documents/units/$(unitId)).data.projectId == projectId;
+    }
+
+    function checklistItemBelongsToCategory(itemId, categoryId) {
+      return get(/databases/$(database)/documents/checklistItems/$(itemId)).data.categoryId == categoryId;
+    }
+
+    // ---------- usernames (نگاشت Username → Email برای امکان ورود با Username) ----------
+    // Firebase Auth ذاتاً بر مبنای Email کار می‌کند؛ چون صفحه ورود طبق بند ۲
+    // پرامپت باید Username بگیرد، این کالکشن پیش از احراز هویت خوانده می‌شود
+    // تا Email متناظر پیدا شود. فقط فیلد email در معرض دید است، نه اطلاعات دیگر کاربر.
+    match /usernames/{username} {
+      allow get: if true;
+      allow list: if false;
+      allow write: if isAdmin();
+    }
+
+    // ---------- users ----------
+    match /users/{userId} {
+      allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    // ---------- projects / blocks / floors / units ----------
+    match /projects/{projectId} {
+      allow read: if hasProjectAccess(projectId);
+      allow write: if isAdmin();
+    }
+    match /blocks/{blockId} {
+      allow read: if hasProjectAccess(resource.data.projectId);
+      allow write: if isAdmin();
+    }
+    match /floors/{floorId} {
+      allow read: if hasProjectAccess(resource.data.projectId);
+      allow write: if isAdmin();
+    }
+    match /units/{unitId} {
+      allow read: if hasProjectAccess(resource.data.projectId);
+      allow write: if isAdmin();
+    }
+
+    // ---------- checklist ----------
+    match /checklistCategories/{categoryId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+    match /checklistItems/{itemId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- progressRecords: Append-Only + Enforced identity/date ----------
+    match /progressRecords/{recordId} {
+      allow read: if hasProjectAccess(resource.data.projectId);
+
+      allow create: if isSignedIn()
+        && hasProjectAccess(request.resource.data.projectId)
+        && hasChecklistAccess(request.resource.data.checklistCategoryId)
+        && blockBelongsToProject(
+             request.resource.data.blockId,
+             request.resource.data.projectId)
+        && floorBelongsToProject(
+             request.resource.data.floorId,
+             request.resource.data.projectId)
+        && checklistItemBelongsToCategory(
+             request.resource.data.checklistItemId,
+             request.resource.data.checklistCategoryId)
+        && (request.resource.data.unitId == null ||
+            unitBelongsToProject(
+              request.resource.data.unitId,
+              request.resource.data.projectId))
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.progressPercent is number
+        && request.resource.data.progressPercent >= 0
+        && request.resource.data.progressPercent <= 100;
+
+      // تاریخچه هرگز ویرایش یا حذف نمی‌شود
+      allow update, delete: if false;
+    }
+
+    // ---------- contractors ----------
+    match /contractors/{contractorId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ---------- workforceRecords: Append-Only ----------
+    match /workforceRecords/{recordId} {
+      allow read: if hasProjectAccess(resource.data.projectId);
+
+      allow create: if isSignedIn()
+        && hasProjectAccess(request.resource.data.projectId)
+        && blockBelongsToProject(
+             request.resource.data.blockId,
+             request.resource.data.projectId)
+        && floorBelongsToProject(
+             request.resource.data.floorId,
+             request.resource.data.projectId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.totalCount ==
+             request.resource.data.skilledCount + request.resource.data.laborCount;
+
+      allow update, delete: if false;
+    }
+
+    // ---------- roles ----------
+    match /roles/{roleId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+  }
+}

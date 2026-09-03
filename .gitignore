@@ -1,0 +1,9 @@
+build/
+.dart_tool/
+.packages
+*.iml
+.idea/
+android/key.properties
+android/**/*.jks
+ios/Runner/GoogleService-Info.plist
+android/app/google-services.json
