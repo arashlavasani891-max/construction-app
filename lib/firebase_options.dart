@@ -1,16 +1,4 @@
-// این فایل باید با ابزار رسمی FlutterFire جایگزین شود.
-// (نمی‌توان از اینجا به پروژه Firebase شما متصل شد چون نیاز به
-// حساب Firebase شخصی شما و اجرای دستور محلی دارد.)
-//
-// مراحل:
-// 1) در https://console.firebase.google.com یک پروژه جدید بسازید (رایگان/Spark).
-// 2) Authentication (روش Email/Password) و Cloud Firestore و Storage را فعال کنید.
-// 3) روی سیستم خودتان اجرا کنید:
-//      dart pub global activate flutterfire_cli
-//      flutterfire configure
-//    این دستور به‌صورت خودکار همین فایل را با کلیدهای واقعی پروژه شما بازنویسی می‌کند.
-//
-// تا قبل از آن، پروژه اجرا نمی‌شود چون این‌جا فقط Placeholder است.
+// این فایل با اطلاعات پروژه Firebase واقعی (Raspina) پر شده است.
 
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart'
@@ -19,9 +7,7 @@ import 'package:flutter/foundation.dart'
 class DefaultFirebaseOptions {
   static FirebaseOptions get currentPlatform {
     if (kIsWeb) {
-      throw UnsupportedError(
-        'نسخه اول این پروژه فقط Android است (طبق پرامپت اولیه).',
-      );
+      return web;
     }
     switch (defaultTargetPlatform) {
       case TargetPlatform.android:
@@ -32,6 +18,16 @@ class DefaultFirebaseOptions {
         );
     }
   }
+
+  static const FirebaseOptions web = FirebaseOptions(
+    apiKey: 'AIzaSyBDNk_i5grmYXW-TZZI-qgJHsMc5svs5iQ',
+    appId: '1:49135288570:web:d45bde8e80752e43498943',
+    messagingSenderId: '49135288570',
+    projectId: 'raspina-167b2',
+    authDomain: 'raspina-167b2.firebaseapp.com',
+    storageBucket: 'raspina-167b2.firebasestorage.app',
+    measurementId: 'G-P7NC349VVN',
+  );
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'REPLACE_ME',
