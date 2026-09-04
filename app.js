@@ -409,6 +409,7 @@ function renderProjectHome() {
     <div class="module-grid">
       <div class="module-tile" onclick="openChecklistModule()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
       <div class="module-tile" onclick="openWorkforceModule()"><div class="em">👷</div><div class="lbl">نیروی کاری</div></div>
+      <div class="module-tile" style="grid-column:span 2;" onclick="openReportsModule()"><div class="em">📊</div><div class="lbl">داشبورد و گزارش</div></div>
     </div>
     <div class="section-title">ساختار پروژه</div>
     ${treeHtml || '<div class="card flat">بلوکی برای این پروژه تعریف نشده.</div>'}
@@ -825,6 +826,149 @@ async function loadTodayWorkforce() {
       <span style="font-size:12.5px;">${escapeHtml(r.contractorName)} — ${escapeHtml(r.activityDescription)} (${r.totalCount} نفر)</span>
       <span class="chip">${escapeHtml(r.createdByUsername)}</span>
     </div>`).join('') : 'هنوز ثبتی امروز نداشتید.';
+}
+
+/* ================= داشبورد و گزارش‌ها (فاز ۵) ================= */
+
+function weightedAverage(valueByKey, weightByKey) {
+  const keys = Object.keys(valueByKey);
+  if (keys.length === 0) return 0;
+  let totalWeight = 0;
+  keys.forEach((k) => { totalWeight += (weightByKey[k] || 0); });
+  if (totalWeight <= 0) {
+    // بدون وزن مشخص: میانگین ساده
+    const sum = keys.reduce((s, k) => s + valueByKey[k], 0);
+    return sum / keys.length;
+  }
+  let sum = 0;
+  keys.forEach((k) => { sum += valueByKey[k] * (weightByKey[k] || 0); });
+  return sum / totalWeight;
+}
+
+function averageByKey(records, keyFn) {
+  const groups = {};
+  records.forEach((r) => {
+    const k = keyFn(r);
+    if (!k) return;
+    (groups[k] = groups[k] || []).push(r.progressPercent);
+  });
+  const result = {};
+  Object.keys(groups).forEach((k) => {
+    const arr = groups[k];
+    result[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
+  });
+  return result;
+}
+
+async function openReportsModule() {
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
+  headerSub.textContent = 'داشبورد و گزارش — ' + currentProject.name;
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال محاسبه…</span></span></div>`;
+
+  const [progSnap, catSnap, itemSnap, wfSnap] = await Promise.all([
+    db.collection('progressRecords').where('projectId', '==', currentProject.id).get(),
+    db.collection('checklistCategories').orderBy('order').get(),
+    db.collection('checklistItems').get(),
+    db.collection('workforceRecords').where('projectId', '==', currentProject.id).get(),
+  ]);
+
+  const allRecords = progSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .filter((r) => r.createdAt && r.createdAt.toMillis)
+    .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+
+  // آخرین رکورد به‌ازای هر (فعالیت + بلوک + طبقه + واحد) — چون allRecords نزولی است.
+  const latestByKey = {};
+  allRecords.forEach((r) => {
+    const key = `${r.checklistItemId}_${r.blockId}_${r.floorId}_${r.unitId || ''}`;
+    if (!(key in latestByKey)) latestByKey[key] = r;
+  });
+  const latestRecords = Object.values(latestByKey);
+
+  const categories = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const allItems = itemSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const weightByItem = {};
+  allItems.forEach((it) => { weightByItem[it.id] = it.weight || 0; });
+
+  const percentsByItem = {};
+  latestRecords.forEach((r) => {
+    (percentsByItem[r.checklistItemId] = percentsByItem[r.checklistItemId] || []).push(r.progressPercent);
+  });
+  const avgPercentByItem = {};
+  Object.keys(percentsByItem).forEach((k) => {
+    const arr = percentsByItem[k];
+    avgPercentByItem[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
+  });
+
+  const overallProgress = weightedAverage(avgPercentByItem, weightByItem);
+
+  const progressByCategory = categories.map((cat) => {
+    const itemIds = allItems.filter((it) => it.categoryId === cat.id).map((it) => it.id);
+    const subset = {};
+    itemIds.forEach((id) => { if (id in avgPercentByItem) subset[id] = avgPercentByItem[id]; });
+    return { name: cat.name, percent: weightedAverage(subset, weightByItem) };
+  });
+
+  const progressByBlockMap = averageByKey(latestRecords, (r) => r.blockId);
+  const progressByBlock = currentBlocks.map((b) => ({
+    name: b.name, percent: progressByBlockMap[b.id] || 0,
+  }));
+
+  // نیروی کاری: مجموع نفرات به تفکیک پیمانکار
+  const wfRecords = wfSnap.docs.map((d) => d.data());
+  const totalsByContractor = {};
+  wfRecords.forEach((r) => {
+    totalsByContractor[r.contractorName] = (totalsByContractor[r.contractorName] || 0) + (r.totalCount || 0);
+  });
+  const contractorRows = Object.keys(totalsByContractor)
+    .map((name) => ({ name, total: totalsByContractor[name] }))
+    .sort((a, b) => b.total - a.total);
+  const grandTotalWorkforce = contractorRows.reduce((s, c) => s + c.total, 0);
+
+  function bar(label, percent) {
+    const p = Math.max(0, Math.min(100, Math.round(percent)));
+    return `
+      <div style="margin-bottom:12px;">
+        <div style="display:flex; justify-content:space-between; font-size:12px; margin-bottom:4px;">
+          <span>${escapeHtml(label)}</span><span style="color:var(--gold); font-family:'JetBrains Mono',monospace;">${p}٪</span>
+        </div>
+        <div style="background:var(--panel-2); border-radius:8px; height:8px; overflow:hidden;">
+          <div style="background:var(--gold); height:100%; width:${p}%;"></div>
+        </div>
+      </div>`;
+  }
+
+  appEl.innerHTML = `
+    <div class="section-title">پیشرفت کلی پروژه</div>
+    <div class="card">
+      <div style="text-align:center; font-family:'JetBrains Mono',monospace; font-size:34px; font-weight:800; color:var(--gold);">
+        ${Math.round(overallProgress)}٪
+      </div>
+    </div>
+
+    <div class="section-title">پیشرفت به تفکیک دسته‌بندی</div>
+    <div class="card flat">
+      ${progressByCategory.length ? progressByCategory.map((c) => bar(c.name, c.percent)).join('') : 'دسته‌بندی‌ای ثبت نشده.'}
+    </div>
+
+    <div class="section-title">پیشرفت به تفکیک بلوک</div>
+    <div class="card flat">
+      ${progressByBlock.length ? progressByBlock.map((b) => bar(b.name, b.percent)).join('') : 'بلوکی ثبت نشده.'}
+    </div>
+
+    <div class="section-title">نیروی کاری (مجموع کل)</div>
+    <div class="summary-strip">
+      <div class="summary-item"><div class="summary-num">${grandTotalWorkforce}</div><div class="summary-label">نفر × روز</div></div>
+      <div class="summary-item"><div class="summary-num">${wfRecords.length}</div><div class="summary-label">ثبت</div></div>
+      <div class="summary-item"><div class="summary-num">${contractorRows.length}</div><div class="summary-label">پیمانکار</div></div>
+    </div>
+    <div class="card flat">
+      ${contractorRows.length ? contractorRows.map((c) => `
+        <div class="card-row" style="padding:6px 0; cursor:default;">
+          <span style="font-size:12.5px;">${escapeHtml(c.name)}</span>
+          <span class="chip">${c.total} نفر × روز</span>
+        </div>`).join('') : 'ثبتی وجود ندارد.'}
+    </div>
+  `;
 }
 
 /* ================= مسیر اصلی ================= */
