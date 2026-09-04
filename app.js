@@ -1,17 +1,17 @@
-/* ===== راسپینا — کنترل پروژه ساختمان — منطق اصلی اپ (فاز ۱ و ۲) ===== */
+/* ===== راسپینا — کنترل پروژه ساختمان — منطق اصلی اپ (فاز ۱ تا ۴) ===== */
 
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
 const db = firebase.firestore();
 
-let currentUser = null;   // آبجکت کاربر Firebase Auth
-let myProfile = null;     // سند users/{uid}
+let currentUser = null;
+let myProfile = null;
 let loginBusy = false;
 
-let myProjects = [];               // پروژه‌های قابل‌مشاهده برای کاربر جاری
-let projectsUnsub = null;          // لغو listener لیست پروژه‌ها (ادمین)
-let currentProject = null;         // پروژه‌ی باز‌شده در صفحه‌ی جزئیات
-let currentBlocks = [];            // بلوک‌های پروژه‌ی جاری، هرکدام با floors پر شده
+let myProjects = [];
+let projectsUnsub = null;
+let currentProject = null;
+let currentBlocks = [];        // بلوک‌های پروژه‌ی جاری (هرکدام با floors)
 
 const appEl = document.getElementById('app');
 const headerRight = document.getElementById('headerRight');
@@ -23,18 +23,17 @@ function hideSplash() {
   const s = document.getElementById('splashScreen');
   if (s) s.classList.add('hide');
 }
-
 function setStatus(online) {
   if (!statusDot || !syncNote) return;
   statusDot.classList.toggle('off', !online);
   syncNote.textContent = online ? 'متصل' : 'قطع ارتباط';
 }
-
 function escapeHtml(str) {
   return String(str || '').replace(/[&<>"']/g, (c) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
   }[c]));
 }
+function isAdminUser() { return myProfile && myProfile.roleId === 'admin'; }
 
 /* ================= ورود ================= */
 
@@ -62,11 +61,7 @@ async function doLogin() {
   if (loginBusy) return;
   const username = (document.getElementById('loginUsername').value || '').trim();
   const password = document.getElementById('loginPassword').value || '';
-
-  if (!username || !password) {
-    renderLogin('نام کاربری و رمز عبور را وارد کنید.');
-    return;
-  }
+  if (!username || !password) { renderLogin('نام کاربری و رمز عبور را وارد کنید.'); return; }
 
   loginBusy = true;
   const btn = document.getElementById('loginBtn');
@@ -74,9 +69,7 @@ async function doLogin() {
 
   try {
     const usernameDoc = await db.collection('usernames').doc(username).get();
-    if (!usernameDoc.exists) {
-      throw { code: 'custom/username-not-found' };
-    }
+    if (!usernameDoc.exists) throw { code: 'custom/username-not-found' };
     const email = usernameDoc.data().email;
     await auth.signInWithEmailAndPassword(email, password);
   } catch (err) {
@@ -100,8 +93,6 @@ function doLogout() {
   auth.signOut();
 }
 
-/* ================= صفحه‌ی غیرفعال ================= */
-
 function renderBlocked() {
   headerSub.textContent = myProfile && myProfile.username ? myProfile.username : '';
   headerRight.innerHTML = `<button class="signout-btn" onclick="doLogout()">خروج</button>`;
@@ -119,7 +110,7 @@ function renderBlocked() {
 function startProjectsListener() {
   if (projectsUnsub) projectsUnsub();
 
-  if (myProfile.roleId === 'admin') {
+  if (isAdminUser()) {
     projectsUnsub = db.collection('projects')
       .orderBy('createdAt', 'desc')
       .onSnapshot((snap) => {
@@ -134,29 +125,22 @@ function startProjectsListener() {
   }
 }
 
-// برای جلوگیری از نیاز به Index، پروژه‌های تخصیص‌داده‌شده را یکی‌یکی می‌خوانیم
-// (به‌جای یک کوئری ترکیبی whereIn + where).
 async function loadProjectsForUser() {
   const ids = myProfile.assignedProjectIds || [];
-  if (ids.length === 0) {
-    myProjects = [];
-    renderProjectList();
-    return;
-  }
+  if (ids.length === 0) { myProjects = []; renderProjectList(); return; }
   const docs = await Promise.all(ids.map((id) => db.collection('projects').doc(id).get()));
-  myProjects = docs
-    .filter((d) => d.exists && d.data().active !== false)
+  myProjects = docs.filter((d) => d.exists && d.data().active !== false)
     .map((d) => ({ id: d.id, ...d.data() }));
   renderProjectList();
 }
 
 function renderProjectList() {
   currentProject = null;
-  const isAdmin = myProfile.roleId === 'admin';
+  const admin = isAdminUser();
 
   headerSub.textContent = myProfile.username || '';
   headerRight.innerHTML = `
-    ${isAdmin ? '<span class="role-badge">مدیر</span>' : ''}
+    ${admin ? '<button class="signout-btn" onclick="renderAdminPanel()">پنل مدیریت</button>' : ''}
     <button class="signout-btn" onclick="doLogout()">خروج</button>
   `;
 
@@ -164,9 +148,8 @@ function renderProjectList() {
   if (myProjects.length === 0) {
     listHtml = `
       <div class="card flat" style="text-align:center; color:var(--ink-soft); font-size:13px; line-height:1.9;">
-        هیچ پروژه‌ای برای شما تعریف نشده است.${isAdmin ? '' : '<br>با مدیر سیستم تماس بگیرید.'}
-      </div>
-    `;
+        هیچ پروژه‌ای برای شما تعریف نشده است.${admin ? '' : '<br>با مدیر سیستم تماس بگیرید.'}
+      </div>`;
   } else {
     listHtml = myProjects.map((p) => `
       <div class="card">
@@ -177,36 +160,30 @@ function renderProjectList() {
           </div>
           ${p.active === false ? '<span class="chip off">غیرفعال</span>' : '<span class="arrow">‹</span>'}
         </div>
-      </div>
-    `).join('');
+      </div>`).join('');
   }
 
   appEl.innerHTML = `
     <div class="section-title">پروژه‌ها</div>
     ${listHtml}
-    ${isAdmin ? '<div style="height:70px;"></div>' : ''}
+    ${admin ? '<div style="height:70px;"></div>' : ''}
   `;
 
-  if (isAdmin) {
+  if (admin) {
     const fab = document.createElement('button');
     fab.className = 'fab';
-    fab.id = 'newProjectFab';
     fab.textContent = '+ پروژه جدید';
     fab.onclick = renderProjectBuilder;
     appEl.appendChild(fab);
   }
 }
 
-/* ================= ساخت پروژه‌ی جدید (فقط مدیر) ================= */
+/* ================= ساخت پروژه‌ی جدید ================= */
 
 let builderBlocks = [];
 
-function newFloorGroup() {
-  return { type: 'residential', floorStart: 1, floorEnd: 1, repeatCount: 1, unitsPerFloor: 0 };
-}
-function newBlock() {
-  return { name: 'بلوک ' + (builderBlocks.length + 1), groups: [newFloorGroup()] };
-}
+function newFloorGroup() { return { type: 'residential', floorStart: 1, floorEnd: 1, repeatCount: 1, unitsPerFloor: 0 }; }
+function newBlock() { return { name: 'بلوک ' + (builderBlocks.length + 1), groups: [newFloorGroup()] }; }
 
 function renderProjectBuilder() {
   builderBlocks = [newBlock()];
@@ -217,34 +194,26 @@ function renderProjectBuilder() {
 
 function computeBuilderTotals() {
   let floors = 0, units = 0;
-  for (const b of builderBlocks) {
-    for (const g of b.groups) {
-      const fc = floorCountOf(g);
-      floors += fc;
-      units += fc * (parseInt(g.unitsPerFloor) || 0);
-    }
+  for (const b of builderBlocks) for (const g of b.groups) {
+    const fc = floorCountOf(g);
+    floors += fc;
+    units += fc * (parseInt(g.unitsPerFloor) || 0);
   }
   return { blocks: builderBlocks.length, floors, units };
 }
-
 function floorCountOf(g) {
   if (g.type === 'residential') {
-    const s = parseInt(g.floorStart) || 1;
-    const e = parseInt(g.floorEnd) || 1;
+    const s = parseInt(g.floorStart) || 1, e = parseInt(g.floorEnd) || 1;
     return Math.max(0, e - s + 1);
   }
   return parseInt(g.repeatCount) || 1;
 }
-
 function floorLabelOf(g, index) {
   switch (g.type) {
     case 'parking': return `پارکینگ ${index + 1}`;
     case 'ground': return 'همکف';
     case 'roof': return 'بام';
-    default: {
-      const start = parseInt(g.floorStart) || 1;
-      return `طبقه ${start + index}`;
-    }
+    default: { const start = parseInt(g.floorStart) || 1; return `طبقه ${start + index}`; }
   }
 }
 
@@ -260,17 +229,14 @@ function drawBuilder() {
       <label class="field-label">توضیحات</label>
       <input id="pDesc" class="field-input" placeholder="اختیاری">
     </div>
-
     <div class="section-title">بلوک‌ها</div>
     <div id="blocksHost"></div>
     <button class="btn-secondary" onclick="addBlock()">+ افزودن بلوک</button>
-
     <div class="summary-strip">
       <div class="summary-item"><div class="summary-num">${totals.blocks}</div><div class="summary-label">بلوک</div></div>
       <div class="summary-item"><div class="summary-num">${totals.floors}</div><div class="summary-label">طبقه</div></div>
       <div class="summary-item"><div class="summary-num">${totals.units}</div><div class="summary-label">واحد</div></div>
     </div>
-
     <div id="builderError" class="auth-error" style="margin-bottom:10px;"></div>
     <button id="submitBuilderBtn" class="btn-primary" style="width:100%;" onclick="submitBuilder()">ساخت پروژه</button>
   `;
@@ -288,8 +254,7 @@ function drawBlocks() {
       </div>
       ${b.groups.map((g, gi) => drawGroup(b, bi, g, gi)).join('')}
       <button class="btn-secondary" onclick="addGroup(${bi})">+ افزودن گروه طبقه</button>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
 function drawGroup(block, bi, g, gi) {
@@ -307,27 +272,20 @@ function drawGroup(block, bi, g, gi) {
       </div>
       ${isResidential ? `
         <div class="row-2">
-          <div>
-            <label class="field-label">از طبقه</label>
+          <div><label class="field-label">از طبقه</label>
             <input type="number" class="field-input" value="${g.floorStart}"
-                   oninput="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();">
-          </div>
-          <div>
-            <label class="field-label">تا طبقه</label>
+                   oninput="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();"></div>
+          <div><label class="field-label">تا طبقه</label>
             <input type="number" class="field-input" value="${g.floorEnd}"
-                   oninput="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();">
-          </div>
-        </div>
-      ` : `
+                   oninput="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();"></div>
+        </div>` : `
         <label class="field-label">تعداد طبقه از این نوع</label>
         <input type="number" class="field-input" value="${g.repeatCount}"
-               oninput="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">
-      `}
+               oninput="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">`}
       <label class="field-label">تعداد واحد در هر طبقه (۰ = بدون واحد)</label>
       <input type="number" class="field-input" value="${g.unitsPerFloor}"
              oninput="builderBlocks[${bi}].groups[${gi}].unitsPerFloor=this.value; refreshTotals();">
-    </div>
-  `;
+    </div>`;
 }
 
 function addBlock() { builderBlocks.push(newBlock()); drawBlocks(); refreshTotals(); }
@@ -342,8 +300,7 @@ function refreshTotals() {
   el.innerHTML = `
     <div class="summary-item"><div class="summary-num">${totals.blocks}</div><div class="summary-label">بلوک</div></div>
     <div class="summary-item"><div class="summary-num">${totals.floors}</div><div class="summary-label">طبقه</div></div>
-    <div class="summary-item"><div class="summary-num">${totals.units}</div><div class="summary-label">واحد</div></div>
-  `;
+    <div class="summary-item"><div class="summary-num">${totals.units}</div><div class="summary-label">واحد</div></div>`;
 }
 
 async function submitBuilder() {
@@ -352,17 +309,15 @@ async function submitBuilder() {
   const desc = document.getElementById('pDesc').value.trim();
   const errEl = document.getElementById('builderError');
   const btn = document.getElementById('submitBuilderBtn');
-
-  if (!name) {
-    errEl.textContent = 'نام پروژه را وارد کنید.';
-    return;
-  }
+  if (!name) { errEl.textContent = 'نام پروژه را وارد کنید.'; return; }
   errEl.textContent = '';
   btn.disabled = true;
   btn.textContent = 'در حال ساخت…';
 
   try {
-    await createProjectWithStructure(name, code, desc, builderBlocks);
+    const newProject = await createProjectWithStructure(name, code, desc, builderBlocks);
+    // به‌روزرسانی فوری لیست، بدون نیاز به منتظر ماندن برای Listener
+    myProjects = [newProject, ...myProjects.filter((p) => p.id !== newProject.id)];
     renderProjectList();
   } catch (err) {
     console.error(err);
@@ -372,23 +327,16 @@ async function submitBuilder() {
   }
 }
 
-// ساخت پروژه + بلوک‌ها + طبقات + واحدها با batch (حداکثر ۴۰۰ عملیات در هر batch)
 async function createProjectWithStructure(name, code, description, blocks) {
   const projectRef = db.collection('projects').doc();
-  const writes = [
-    { ref: projectRef, data: {
-        name, code, description, active: true,
-        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-      } },
-  ];
+  const nowLocal = new Date();
+  const projectData = { name, code, description, active: true, createdAt: firebase.firestore.FieldValue.serverTimestamp() };
+  const writes = [{ ref: projectRef, data: projectData }];
 
   let blockOrder = 0;
   for (const b of blocks) {
     const blockRef = db.collection('blocks').doc();
-    writes.push({ ref: blockRef, data: {
-      projectId: projectRef.id, name: b.name, order: blockOrder++,
-    } });
-
+    writes.push({ ref: blockRef, data: { projectId: projectRef.id, name: b.name, order: blockOrder++ } });
     let floorOrder = 0;
     for (const g of b.groups) {
       const fc = floorCountOf(g);
@@ -396,32 +344,27 @@ async function createProjectWithStructure(name, code, description, blocks) {
       for (let i = 0; i < fc; i++) {
         const floorRef = db.collection('floors').doc();
         writes.push({ ref: floorRef, data: {
-          blockId: blockRef.id, projectId: projectRef.id,
-          name: floorLabelOf(g, i), order: floorOrder++,
-          type: g.type, unitsCount: unitsPerFloor,
-        } });
-
+          blockId: blockRef.id, projectId: projectRef.id, name: floorLabelOf(g, i),
+          order: floorOrder++, type: g.type, unitsCount: unitsPerFloor } });
         for (let u = 1; u <= unitsPerFloor; u++) {
           const unitRef = db.collection('units').doc();
           writes.push({ ref: unitRef, data: {
-            floorId: floorRef.id, blockId: blockRef.id, projectId: projectRef.id,
-            name: 'واحد ' + u,
-          } });
+            floorId: floorRef.id, blockId: blockRef.id, projectId: projectRef.id, name: 'واحد ' + u } });
         }
       }
     }
   }
-
   for (let i = 0; i < writes.length; i += 400) {
     const chunk = writes.slice(i, i + 400);
     const batch = db.batch();
     chunk.forEach((w) => batch.set(w.ref, w.data));
     await batch.commit();
   }
-  return projectRef.id;
+  // آبجکت محلی برای نمایش فوری (createdAt واقعی کمی بعد از سرور می‌رسد)
+  return { id: projectRef.id, ...projectData, createdAt: { toMillis: () => nowLocal.getTime() } };
 }
 
-/* ================= صفحه‌ی پروژه (بلوک/طبقه/واحد + ماژول‌ها) ================= */
+/* ================= صفحه‌ی پروژه ================= */
 
 async function openProject(projectId) {
   const p = myProjects.find((x) => x.id === projectId);
@@ -432,15 +375,11 @@ async function openProject(projectId) {
   headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectList()">بازگشت</button>`;
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
 
-  // بدون OrderBy در کوئری (برای پرهیز از نیاز به Index)؛ مرتب‌سازی سمت کلاینت.
   const blocksSnap = await db.collection('blocks').where('projectId', '==', projectId).get();
-  const blocks = blocksSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.order || 0) - (b.order || 0));
-
+  const blocks = blocksSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
   for (const b of blocks) {
     const floorsSnap = await db.collection('floors').where('blockId', '==', b.id).get();
-    b.floors = floorsSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
-      .sort((a, b2) => (a.order || 0) - (b2.order || 0));
+    b.floors = floorsSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b2) => (a.order || 0) - (b2.order || 0));
   }
   currentBlocks = blocks;
   renderProjectHome();
@@ -448,7 +387,7 @@ async function openProject(projectId) {
 
 function renderProjectHome() {
   const p = currentProject;
-  const isAdmin = myProfile.roleId === 'admin';
+  const admin = isAdminUser();
 
   const treeHtml = currentBlocks.map((b, i) => `
     <div class="tree-block">
@@ -458,44 +397,25 @@ function renderProjectHome() {
       </div>
       <div class="tree-body" id="treeBody${i}">
         ${b.floors.map((f) => `
-          <div class="tree-floor">
-            <span>${escapeHtml(f.name)}</span>
-            <span class="cnt">${f.unitsCount > 0 ? f.unitsCount + ' واحد' : 'بدون واحد'}</span>
-          </div>
+          <div class="tree-floor"><span>${escapeHtml(f.name)}</span>
+            <span class="cnt">${f.unitsCount > 0 ? f.unitsCount + ' واحد' : 'بدون واحد'}</span></div>
         `).join('') || '<div class="tree-floor">طبقه‌ای ثبت نشده</div>'}
       </div>
-    </div>
-  `).join('');
+    </div>`).join('');
 
   appEl.innerHTML = `
     <div class="section-title">${escapeHtml(p.name)}</div>
     ${p.description ? `<p style="color:var(--ink-soft); font-size:12.5px; margin-top:-6px;">${escapeHtml(p.description)}</p>` : ''}
-
     <div class="module-grid">
-      <div class="module-tile" onclick="alert('چک‌لیست در فاز بعدی اضافه می‌شود.')">
-        <div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div>
-      </div>
-      <div class="module-tile" onclick="alert('ثبت پیشرفت در فاز بعدی اضافه می‌شود.')">
-        <div class="em">📈</div><div class="lbl">ثبت پیشرفت</div>
-      </div>
-      <div class="module-tile" onclick="alert('استقرار نفرات در فاز بعدی اضافه می‌شود.')">
-        <div class="em">👷</div><div class="lbl">نیروی کاری</div>
-      </div>
-      <div class="module-tile" onclick="alert('گزارش‌ها در فاز بعدی اضافه می‌شود.')">
-        <div class="em">📊</div><div class="lbl">داشبورد و گزارش</div>
-      </div>
+      <div class="module-tile" onclick="openChecklistModule()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
+      <div class="module-tile" onclick="openWorkforceModule()"><div class="em">👷</div><div class="lbl">نیروی کاری</div></div>
     </div>
-
     <div class="section-title">ساختار پروژه</div>
     ${treeHtml || '<div class="card flat">بلوکی برای این پروژه تعریف نشده.</div>'}
-
-    ${isAdmin ? `
+    ${admin ? `
       <div style="margin-top:18px;">
-        <button class="btn-danger" onclick="confirmDeactivateProject()">
-          ${p.active === false ? '' : 'غیرفعال کردن این پروژه'}
-        </button>
-      </div>
-    ` : ''}
+        <button class="btn-danger" onclick="confirmDeactivateProject()">غیرفعال کردن این پروژه</button>
+      </div>` : ''}
   `;
 }
 
@@ -511,36 +431,420 @@ async function confirmDeactivateProject() {
   renderProjectList();
 }
 
+/* ================= پنل مدیریت (سراسری) ================= */
+
+function renderAdminPanel() {
+  headerSub.textContent = 'پنل مدیریت';
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectList()">بازگشت</button>`;
+  appEl.innerHTML = `
+    <div class="module-grid">
+      <div class="module-tile" onclick="renderChecklistAdmin()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
+      <div class="module-tile" onclick="renderContractorsAdmin()"><div class="em">🏗️</div><div class="lbl">پیمانکاران</div></div>
+    </div>
+  `;
+}
+
+/* ---- مدیریت دسته‌بندی‌های چک‌لیست ---- */
+
+function renderChecklistAdmin() {
+  headerSub.textContent = 'مدیریت چک‌لیست';
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
+  appEl.innerHTML = `
+    <div class="section-title">دسته‌بندی‌ها</div>
+    <div id="catList" class="card flat">در حال بارگذاری…</div>
+    <div class="card flat">
+      <label class="field-label">دسته‌بندی جدید</label>
+      <div class="row-2">
+        <input id="newCatName" class="field-input" placeholder="مثلاً ابنیه">
+        <button class="btn-primary" onclick="addChecklistCategory()">افزودن</button>
+      </div>
+    </div>
+  `;
+  db.collection('checklistCategories').orderBy('order').get().then((snap) => {
+    const cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const host = document.getElementById('catList');
+    if (!host) return;
+    host.innerHTML = cats.length ? cats.map((c) => `
+      <div class="card-row" style="padding:8px 0;" onclick="renderChecklistItemsAdmin('${c.id}','${escapeHtml(c.name)}')">
+        <span class="card-title" style="font-size:13.5px;">${escapeHtml(c.name)}</span>
+        <span class="arrow">‹</span>
+      </div>`).join('') : 'دسته‌بندی‌ای ثبت نشده.';
+  });
+}
+
+async function addChecklistCategory() {
+  const nameEl = document.getElementById('newCatName');
+  const name = nameEl.value.trim();
+  if (!name) return;
+  const countSnap = await db.collection('checklistCategories').get();
+  await db.collection('checklistCategories').add({ name, order: countSnap.size });
+  nameEl.value = '';
+  renderChecklistAdmin();
+}
+
+/* ---- مدیریت آیتم‌های یک دسته ---- */
+
+function renderChecklistItemsAdmin(categoryId, categoryName) {
+  headerSub.textContent = categoryName;
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderChecklistAdmin()">بازگشت</button>`;
+  appEl.innerHTML = `
+    <div class="section-title">فعالیت‌های «${escapeHtml(categoryName)}»</div>
+    <div id="itemList" class="card flat">در حال بارگذاری…</div>
+    <div class="card flat">
+      <label class="field-label">فعالیت جدید</label>
+      <input id="newItemName" class="field-input" placeholder="نام فعالیت">
+      <label class="field-label">وزن (٪ از کل پیشرفت — اختیاری)</label>
+      <input id="newItemWeight" type="number" class="field-input" placeholder="0">
+      <button class="btn-primary" style="width:100%;" onclick="addChecklistItem('${categoryId}')">افزودن فعالیت</button>
+    </div>
+  `;
+  loadChecklistItemsAdmin(categoryId);
+}
+
+async function loadChecklistItemsAdmin(categoryId) {
+  const snap = await db.collection('checklistItems').where('categoryId', '==', categoryId).get();
+  const items = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
+  const host = document.getElementById('itemList');
+  if (!host) return;
+  host.innerHTML = items.length ? items.map((it) => `
+    <div class="card-row" style="padding:8px 0;">
+      <span>${escapeHtml(it.name)} ${it.weight ? `<span class="chip">${it.weight}%</span>` : ''}</span>
+      <button class="icon-btn" onclick="deleteChecklistItem('${it.id}','${categoryId}','${escapeHtml(categoryName_global)}')">حذف</button>
+    </div>`).join('') : 'فعالیتی ثبت نشده.';
+}
+
+let categoryName_global = '';
+function addChecklistItem(categoryId) {
+  categoryName_global = document.getElementById('itemList') ? headerSub.textContent : '';
+  return _addChecklistItem(categoryId);
+}
+async function _addChecklistItem(categoryId) {
+  const nameEl = document.getElementById('newItemName');
+  const weightEl = document.getElementById('newItemWeight');
+  const name = nameEl.value.trim();
+  if (!name) return;
+  const countSnap = await db.collection('checklistItems').where('categoryId', '==', categoryId).get();
+  await db.collection('checklistItems').add({
+    categoryId, parentItemId: null, name, order: countSnap.size,
+    weight: parseFloat(weightEl.value) || 0,
+  });
+  nameEl.value = ''; weightEl.value = '';
+  loadChecklistItemsAdmin(categoryId);
+}
+async function deleteChecklistItem(itemId, categoryId) {
+  if (!confirm('این فعالیت حذف شود؟')) return;
+  await db.collection('checklistItems').doc(itemId).delete();
+  loadChecklistItemsAdmin(categoryId);
+}
+
+/* ---- مدیریت پیمانکاران ---- */
+
+function renderContractorsAdmin() {
+  headerSub.textContent = 'پیمانکاران';
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
+  appEl.innerHTML = `
+    <div class="section-title">لیست پیمانکاران</div>
+    <div id="contractorList" class="card flat">در حال بارگذاری…</div>
+    <div class="card flat">
+      <label class="field-label">نام پیمانکار</label>
+      <input id="newContractorName" class="field-input" placeholder="مثلاً شرکت سازه پایدار">
+      <label class="field-label">نوع فعالیت (اختیاری)</label>
+      <input id="newContractorType" class="field-input" placeholder="مثلاً بتن‌ریزی">
+      <button class="btn-primary" style="width:100%;" onclick="addContractor()">افزودن پیمانکار</button>
+    </div>
+  `;
+  loadContractorsAdmin();
+}
+
+async function loadContractorsAdmin() {
+  const snap = await db.collection('contractors').orderBy('name').get();
+  const list = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  const host = document.getElementById('contractorList');
+  if (!host) return;
+  host.innerHTML = list.length ? list.map((c) => `
+    <div class="card-row" style="padding:8px 0;">
+      <span>${escapeHtml(c.name)} ${c.activityType ? `<span class="chip">${escapeHtml(c.activityType)}</span>` : ''} ${c.active === false ? '<span class="chip off">غیرفعال</span>' : ''}</span>
+      <button class="icon-btn" onclick="toggleContractorActive('${c.id}', ${c.active === false})">${c.active === false ? 'فعال‌سازی' : 'غیرفعال'}</button>
+    </div>`).join('') : 'پیمانکاری ثبت نشده.';
+}
+
+async function addContractor() {
+  const nameEl = document.getElementById('newContractorName');
+  const typeEl = document.getElementById('newContractorType');
+  const name = nameEl.value.trim();
+  if (!name) return;
+  await db.collection('contractors').add({
+    name, code: '', activityType: typeEl.value.trim(), description: '', active: true,
+  });
+  nameEl.value = ''; typeEl.value = '';
+  loadContractorsAdmin();
+}
+async function toggleContractorActive(id, makeActive) {
+  await db.collection('contractors').doc(id).update({ active: makeActive });
+  loadContractorsAdmin();
+}
+
+/* ================= ماژول چک‌لیست/ثبت پیشرفت (داخل پروژه) ================= */
+
+async function openChecklistModule() {
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+  const snap = await db.collection('checklistCategories').orderBy('order').get();
+  let cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  if (!isAdminUser()) {
+    const allowed = myProfile.assignedChecklistCategoryIds || [];
+    cats = cats.filter((c) => allowed.includes(c.id));
+  }
+
+  if (cats.length === 0) {
+    appEl.innerHTML = `<div class="card flat" style="text-align:center;">هیچ چک‌لیستی برای شما تعریف نشده است.</div>
+      <button class="btn-secondary" style="margin-top:10px;" onclick="renderProjectHome()">بازگشت</button>`;
+    return;
+  }
+  if (cats.length === 1) { openProgressEntry(cats[0]); return; }
+
+  appEl.innerHTML = `
+    <div class="section-title">انتخاب دسته‌بندی</div>
+    ${cats.map((c) => `
+      <div class="card"><div class="card-row" onclick='openProgressEntry(${JSON.stringify(c)})'>
+        <span class="card-title">${escapeHtml(c.name)}</span><span class="arrow">‹</span>
+      </div></div>`).join('')}
+    <button class="btn-secondary" onclick="renderProjectHome()">بازگشت</button>
+  `;
+}
+
+async function openProgressEntry(category) {
+  headerSub.textContent = 'ثبت پیشرفت — ' + category.name;
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+
+  const itemsSnap = await db.collection('checklistItems').where('categoryId', '==', category.id).get();
+  const items = itemsSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  appEl.innerHTML = `
+    <div class="section-title">ثبت پیشرفت — ${escapeHtml(category.name)}</div>
+    <div class="card flat">
+      <label class="field-label">بلوک</label>
+      <select id="peBlock" class="field-input" onchange="peOnBlockChange()">
+        <option value="">— انتخاب کنید —</option>
+        ${currentBlocks.map((b) => `<option value="${b.id}">${escapeHtml(b.name)}</option>`).join('')}
+      </select>
+      <label class="field-label">طبقه</label>
+      <select id="peFloor" class="field-input" onchange="peOnFloorChange()"><option value="">ابتدا بلوک را انتخاب کنید</option></select>
+      <label class="field-label">واحد (اختیاری)</label>
+      <select id="peUnit" class="field-input"><option value="">— بدون واحد مشخص —</option></select>
+      <label class="field-label">فعالیت</label>
+      <select id="peItem" class="field-input">
+        <option value="">— انتخاب کنید —</option>
+        ${items.map((it) => `<option value='${it.id}'>${escapeHtml(it.name)}</option>`).join('')}
+      </select>
+      <label class="field-label">درصد پیشرفت: <span id="peProgressLabel">0</span>٪</label>
+      <input id="peProgress" type="range" min="0" max="100" value="0" style="width:100%;"
+             oninput="document.getElementById('peProgressLabel').textContent=this.value">
+      <label class="field-label">توضیحات (اختیاری)</label>
+      <input id="peDesc" class="field-input" placeholder="توضیحات">
+    </div>
+    <div id="peError" class="auth-error" style="margin-bottom:10px;"></div>
+    <button id="peSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitProgress('${category.id}')">ثبت</button>
+    <div class="section-title">ثبت‌های امروز</div>
+    <div id="peTodayList" class="card flat">—</div>
+  `;
+  loadTodayProgress(category.id);
+}
+
+function peOnBlockChange() {
+  const blockId = document.getElementById('peBlock').value;
+  const floorSel = document.getElementById('peFloor');
+  const unitSel = document.getElementById('peUnit');
+  unitSel.innerHTML = '<option value="">— بدون واحد مشخص —</option>';
+  if (!blockId) { floorSel.innerHTML = '<option value="">ابتدا بلوک را انتخاب کنید</option>'; return; }
+  const block = currentBlocks.find((b) => b.id === blockId);
+  floorSel.innerHTML = '<option value="">— انتخاب کنید —</option>' +
+    (block ? block.floors.map((f) => `<option value="${f.id}">${escapeHtml(f.name)}</option>`).join('') : '');
+}
+
+async function peOnFloorChange() {
+  const floorId = document.getElementById('peFloor').value;
+  const unitSel = document.getElementById('peUnit');
+  unitSel.innerHTML = '<option value="">— بدون واحد مشخص —</option>';
+  if (!floorId) return;
+  const snap = await db.collection('units').where('floorId', '==', floorId).get();
+  const units = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name, 'fa'));
+  unitSel.innerHTML += units.map((u) => `<option value="${u.id}">${escapeHtml(u.name)}</option>`).join('');
+}
+
+async function submitProgress(categoryId) {
+  const blockId = document.getElementById('peBlock').value;
+  const floorId = document.getElementById('peFloor').value;
+  const unitId = document.getElementById('peUnit').value || null;
+  const itemId = document.getElementById('peItem').value;
+  const percent = parseFloat(document.getElementById('peProgress').value) || 0;
+  const desc = document.getElementById('peDesc').value.trim();
+  const errEl = document.getElementById('peError');
+  const btn = document.getElementById('peSubmitBtn');
+
+  if (!blockId || !floorId || !itemId) {
+    errEl.textContent = 'بلوک، طبقه و فعالیت را انتخاب کنید.';
+    return;
+  }
+  errEl.textContent = '';
+  btn.disabled = true; btn.textContent = 'در حال ثبت…';
+
+  try {
+    await db.collection('progressRecords').add({
+      projectId: currentProject.id, blockId, floorId, unitId,
+      checklistCategoryId: categoryId, checklistItemId: itemId,
+      progressPercent: percent, description: desc, photoUrl: null,
+      createdBy: currentUser.uid, createdByUsername: myProfile.username || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('peDesc').value = '';
+    document.getElementById('peProgress').value = 0;
+    document.getElementById('peProgressLabel').textContent = '0';
+    loadTodayProgress(categoryId);
+  } catch (err) {
+    console.error(err);
+    errEl.textContent = 'خطا در ثبت: ' + (err.message || err);
+  }
+  btn.disabled = false; btn.textContent = 'ثبت';
+}
+
+async function loadTodayProgress(categoryId) {
+  const host = document.getElementById('peTodayList');
+  if (!host) return;
+  const snap = await db.collection('progressRecords')
+    .where('projectId', '==', currentProject.id)
+    .where('checklistCategoryId', '==', categoryId)
+    .get();
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  const records = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .filter((r) => r.createdAt && r.createdAt.toDate && r.createdAt.toDate() >= startOfDay)
+    .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+
+  host.innerHTML = records.length ? records.map((r) => `
+    <div class="card-row" style="padding:6px 0; cursor:default;">
+      <span style="font-size:12.5px;">${r.progressPercent}٪ ${r.description ? '— ' + escapeHtml(r.description) : ''}</span>
+      <span class="chip">${escapeHtml(r.createdByUsername)}</span>
+    </div>`).join('') : 'هنوز ثبتی امروز نداشتید.';
+}
+
+/* ================= ماژول نیروی کاری (داخل پروژه) ================= */
+
+async function openWorkforceModule() {
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
+  headerSub.textContent = 'نیروی کاری — ' + currentProject.name;
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+
+  const snap = await db.collection('contractors').orderBy('name').get();
+  const contractors = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((c) => c.active !== false);
+
+  appEl.innerHTML = `
+    <div class="section-title">ثبت استقرار نفرات</div>
+    <div class="card flat">
+      <label class="field-label">پیمانکار</label>
+      <select id="wfContractor" class="field-input">
+        <option value="">— انتخاب کنید —</option>
+        ${contractors.map((c) => `<option value='${c.id}' data-name="${escapeHtml(c.name)}">${escapeHtml(c.name)}</option>`).join('')}
+      </select>
+      <label class="field-label">شرح فعالیت</label>
+      <input id="wfActivity" class="field-input" placeholder="مثلاً قالب‌بندی سقف">
+      <div class="row-2">
+        <div><label class="field-label">استادکار</label>
+          <input id="wfSkilled" type="number" class="field-input" value="0" oninput="wfUpdateTotal()"></div>
+        <div><label class="field-label">کارگر</label>
+          <input id="wfLabor" type="number" class="field-input" value="0" oninput="wfUpdateTotal()"></div>
+      </div>
+      <div style="font-size:12.5px; color:var(--ink-soft); margin-bottom:10px;">مجموع نفرات: <b id="wfTotal">0</b></div>
+      <label class="field-label">توضیحات (اختیاری)</label>
+      <input id="wfDesc" class="field-input" placeholder="توضیحات">
+    </div>
+    <div id="wfError" class="auth-error" style="margin-bottom:10px;"></div>
+    <button id="wfSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitWorkforce()">ثبت</button>
+    <div class="section-title">ثبت‌های امروز</div>
+    <div id="wfTodayList" class="card flat">—</div>
+  `;
+  loadTodayWorkforce();
+}
+
+function wfUpdateTotal() {
+  const s = parseInt(document.getElementById('wfSkilled').value) || 0;
+  const l = parseInt(document.getElementById('wfLabor').value) || 0;
+  document.getElementById('wfTotal').textContent = s + l;
+}
+
+async function submitWorkforce() {
+  const sel = document.getElementById('wfContractor');
+  const contractorId = sel.value;
+  const contractorName = sel.selectedOptions[0] ? sel.selectedOptions[0].dataset.name : '';
+  const activity = document.getElementById('wfActivity').value.trim();
+  const skilled = parseInt(document.getElementById('wfSkilled').value) || 0;
+  const labor = parseInt(document.getElementById('wfLabor').value) || 0;
+  const desc = document.getElementById('wfDesc').value.trim();
+  const errEl = document.getElementById('wfError');
+  const btn = document.getElementById('wfSubmitBtn');
+
+  if (!contractorId || !activity) {
+    errEl.textContent = 'پیمانکار و شرح فعالیت را وارد کنید.';
+    return;
+  }
+  errEl.textContent = '';
+  btn.disabled = true; btn.textContent = 'در حال ثبت…';
+
+  try {
+    await db.collection('workforceRecords').add({
+      projectId: currentProject.id, contractorId, contractorName,
+      activityDescription: activity, skilledCount: skilled, laborCount: labor,
+      totalCount: skilled + labor, description: desc,
+      createdBy: currentUser.uid, createdByUsername: myProfile.username || '',
+      createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+    });
+    document.getElementById('wfActivity').value = '';
+    document.getElementById('wfSkilled').value = 0;
+    document.getElementById('wfLabor').value = 0;
+    document.getElementById('wfDesc').value = '';
+    wfUpdateTotal();
+    loadTodayWorkforce();
+  } catch (err) {
+    console.error(err);
+    errEl.textContent = 'خطا در ثبت: ' + (err.message || err);
+  }
+  btn.disabled = false; btn.textContent = 'ثبت';
+}
+
+async function loadTodayWorkforce() {
+  const host = document.getElementById('wfTodayList');
+  if (!host) return;
+  const snap = await db.collection('workforceRecords').where('projectId', '==', currentProject.id).get();
+  const startOfDay = new Date(); startOfDay.setHours(0, 0, 0, 0);
+  const records = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .filter((r) => r.createdAt && r.createdAt.toDate && r.createdAt.toDate() >= startOfDay)
+    .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
+
+  host.innerHTML = records.length ? records.map((r) => `
+    <div class="card-row" style="padding:6px 0; cursor:default;">
+      <span style="font-size:12.5px;">${escapeHtml(r.contractorName)} — ${escapeHtml(r.activityDescription)} (${r.totalCount} نفر)</span>
+      <span class="chip">${escapeHtml(r.createdByUsername)}</span>
+    </div>`).join('') : 'هنوز ثبتی امروز نداشتید.';
+}
+
 /* ================= مسیر اصلی ================= */
 
 auth.onAuthStateChanged(async (user) => {
   currentUser = user;
   setStatus(true);
-
   if (projectsUnsub) { projectsUnsub(); projectsUnsub = null; }
 
-  if (!user) {
-    myProfile = null;
-    renderLogin();
-    hideSplash();
-    return;
-  }
+  if (!user) { myProfile = null; renderLogin(); hideSplash(); return; }
 
   try {
     const doc = await db.collection('users').doc(user.uid).get();
     if (!doc.exists) {
       myProfile = { username: '', displayName: '', roleId: '', active: false };
-      renderBlocked();
-      hideSplash();
-      return;
+      renderBlocked(); hideSplash(); return;
     }
     myProfile = doc.data();
-
-    if (myProfile.active !== true) {
-      renderBlocked();
-    } else {
-      startProjectsListener();
-    }
+    if (myProfile.active !== true) renderBlocked();
+    else startProjectsListener();
   } catch (err) {
     console.error(err);
     appEl.innerHTML = `<div class="center-screen"><p class="auth-error">خطا در دریافت اطلاعات کاربر.</p></div>`;

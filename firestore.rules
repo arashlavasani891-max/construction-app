@@ -3,7 +3,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---------- کمک‌توابع ----------
     function isSignedIn() {
       return request.auth != null;
     }
@@ -26,10 +25,6 @@ service cloud.firestore {
         (isAdmin() || categoryId in myUserDoc().get('assignedChecklistCategoryIds', []));
     }
 
-    function projectDoc(projectId) {
-      return get(/databases/$(database)/documents/projects/$(projectId)).data;
-    }
-
     function blockBelongsToProject(blockId, projectId) {
       return get(/databases/$(database)/documents/blocks/$(blockId)).data.projectId == projectId;
     }
@@ -46,23 +41,17 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/checklistItems/$(itemId)).data.categoryId == categoryId;
     }
 
-    // ---------- usernames (نگاشت Username → Email برای امکان ورود با Username) ----------
-    // Firebase Auth ذاتاً بر مبنای Email کار می‌کند؛ چون صفحه ورود طبق بند ۲
-    // پرامپت باید Username بگیرد، این کالکشن پیش از احراز هویت خوانده می‌شود
-    // تا Email متناظر پیدا شود. فقط فیلد email در معرض دید است، نه اطلاعات دیگر کاربر.
     match /usernames/{username} {
       allow get: if true;
       allow list: if false;
       allow write: if isAdmin();
     }
 
-    // ---------- users ----------
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
       allow write: if isAdmin();
     }
 
-    // ---------- projects / blocks / floors / units ----------
     match /projects/{projectId} {
       allow read: if hasProjectAccess(projectId);
       allow write: if isAdmin();
@@ -80,7 +69,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // ---------- checklist ----------
     match /checklistCategories/{categoryId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
@@ -90,7 +78,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // ---------- progressRecords: Append-Only + Enforced identity/date ----------
     match /progressRecords/{recordId} {
       allow read: if hasProjectAccess(resource.data.projectId);
 
@@ -116,28 +103,20 @@ service cloud.firestore {
         && request.resource.data.progressPercent >= 0
         && request.resource.data.progressPercent <= 100;
 
-      // تاریخچه هرگز ویرایش یا حذف نمی‌شود
       allow update, delete: if false;
     }
 
-    // ---------- contractors ----------
     match /contractors/{contractorId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
-    // ---------- workforceRecords: Append-Only ----------
+    // ---------- workforceRecords: Append-Only (بدون نیاز به blockId/floorId) ----------
     match /workforceRecords/{recordId} {
       allow read: if hasProjectAccess(resource.data.projectId);
 
       allow create: if isSignedIn()
         && hasProjectAccess(request.resource.data.projectId)
-        && blockBelongsToProject(
-             request.resource.data.blockId,
-             request.resource.data.projectId)
-        && floorBelongsToProject(
-             request.resource.data.floorId,
-             request.resource.data.projectId)
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.createdAt == request.time
         && request.resource.data.totalCount ==
@@ -146,7 +125,6 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
-    // ---------- roles ----------
     match /roles/{roleId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
