@@ -441,6 +441,7 @@ function renderAdminPanel() {
     <div class="module-grid">
       <div class="module-tile" onclick="renderChecklistAdmin()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
       <div class="module-tile" onclick="renderContractorsAdmin()"><div class="em">🏗️</div><div class="lbl">پیمانکاران</div></div>
+      <div class="module-tile" style="grid-column:span 2;" onclick="renderUsersAdmin()"><div class="em">👤</div><div class="lbl">کاربران</div></div>
     </div>
   `;
 }
@@ -937,7 +938,13 @@ async function openReportsModule() {
       </div>`;
   }
 
+  window.__reportData = { overallProgress, progressByCategory, progressByBlock, contractorRows, grandTotalWorkforce, wfRecordsCount: wfRecords.length };
+
   appEl.innerHTML = `
+    <div style="display:flex; gap:8px; margin-bottom:6px;">
+      <button class="btn-secondary" style="flex:1;" onclick="exportReportExcel()">خروجی اکسل</button>
+      <button class="btn-secondary" style="flex:1;" onclick="exportReportPdf()">خروجی PDF</button>
+    </div>
     <div class="section-title">پیشرفت کلی پروژه</div>
     <div class="card">
       <div style="text-align:center; font-family:'JetBrains Mono',monospace; font-size:34px; font-weight:800; color:var(--gold);">
@@ -969,6 +976,243 @@ async function openReportsModule() {
         </div>`).join('') : 'ثبتی وجود ندارد.'}
     </div>
   `;
+}
+
+/* ================= مدیریت کاربران (فاز ۶) ================= */
+
+let usersAdminCache = [];
+let usersAdminProjectsCache = [];
+let usersAdminCategoriesCache = [];
+
+async function renderUsersAdmin() {
+  headerSub.textContent = 'کاربران';
+  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+
+  const [usersSnap, projSnap, catSnap] = await Promise.all([
+    db.collection('users').get(),
+    db.collection('projects').get(),
+    db.collection('checklistCategories').orderBy('order').get(),
+  ]);
+  usersAdminCache = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.username || '').localeCompare(b.username || '', 'fa'));
+  usersAdminProjectsCache = projSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  usersAdminCategoriesCache = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+
+  drawUsersAdmin();
+}
+
+function drawUsersAdmin() {
+  appEl.innerHTML = `
+    <div class="section-title">لیست کاربران</div>
+    ${usersAdminCache.map((u) => `
+      <div class="card">
+        <div class="card-row" onclick="renderUserForm('${u.id}')">
+          <div>
+            <div class="card-title">${escapeHtml(u.username)}</div>
+            <div class="card-sub">${u.roleId === 'admin' ? 'مدیر' : 'کاربر عادی'} — ${(u.assignedProjectIds || []).length} پروژه</div>
+          </div>
+          ${u.active === false ? '<span class="chip off">غیرفعال</span>' : '<span class="arrow">‹</span>'}
+        </div>
+      </div>`).join('') || '<div class="card flat">کاربری ثبت نشده.</div>'}
+    <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="renderUserForm(null)">+ کاربر جدید</button>
+  `;
+}
+
+function renderUserForm(userId) {
+  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
+  headerRight.innerHTML = `<button class="back-btn" onclick="drawUsersAdmin()">بازگشت</button>`;
+  headerSub.textContent = editing ? 'ویرایش کاربر' : 'کاربر جدید';
+
+  const assignedProjectIds = editing ? (editing.assignedProjectIds || []) : [];
+  const assignedCatIds = editing ? (editing.assignedChecklistCategoryIds || []) : [];
+
+  appEl.innerHTML = `
+    <div class="section-title">${editing ? 'ویرایش کاربر' : 'ساخت کاربر جدید'}</div>
+    <div class="card flat">
+      <label class="field-label">نام کاربری</label>
+      <input id="ufUsername" class="field-input" value="${editing ? escapeHtml(editing.username) : ''}" ${editing ? 'disabled' : ''}>
+      ${!editing ? `
+        <label class="field-label">رمز عبور</label>
+        <input id="ufPassword" type="password" class="field-input" placeholder="حداقل ۶ کاراکتر">
+      ` : ''}
+      <label class="field-label">نام نمایشی</label>
+      <input id="ufDisplayName" class="field-input" value="${editing ? escapeHtml(editing.displayName || '') : ''}">
+      <label class="field-label">نقش</label>
+      <select id="ufRole" class="field-input">
+        <option value="user" ${editing && editing.roleId !== 'admin' ? 'selected' : ''}>کاربر عادی</option>
+        <option value="admin" ${editing && editing.roleId === 'admin' ? 'selected' : ''}>مدیر</option>
+      </select>
+      <label class="field-label">
+        <input type="checkbox" id="ufActive" ${!editing || editing.active !== false ? 'checked' : ''}> فعال باشد
+      </label>
+    </div>
+
+    <div class="section-title">پروژه‌های قابل‌دسترس</div>
+    <div class="card flat">
+      ${usersAdminProjectsCache.length ? usersAdminProjectsCache.map((p) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
+          <input type="checkbox" class="ufProjectChk" value="${p.id}" ${assignedProjectIds.includes(p.id) ? 'checked' : ''}>
+          ${escapeHtml(p.name)}
+        </label>`).join('') : 'پروژه‌ای وجود ندارد.'}
+    </div>
+
+    <div class="section-title">دسته‌بندی‌های چک‌لیست قابل‌دسترس</div>
+    <div class="card flat">
+      ${usersAdminCategoriesCache.length ? usersAdminCategoriesCache.map((c) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
+          <input type="checkbox" class="ufCatChk" value="${c.id}" ${assignedCatIds.includes(c.id) ? 'checked' : ''}>
+          ${escapeHtml(c.name)}
+        </label>`).join('') : 'دسته‌بندی‌ای وجود ندارد.'}
+    </div>
+
+    <div id="ufError" class="auth-error" style="margin-bottom:10px;"></div>
+    <button id="ufSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitUserForm('${userId || ''}')">
+      ${editing ? 'ذخیره تغییرات' : 'ساخت کاربر'}
+    </button>
+  `;
+}
+
+async function submitUserForm(userId) {
+  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
+  const displayName = document.getElementById('ufDisplayName').value.trim();
+  const roleId = document.getElementById('ufRole').value;
+  const active = document.getElementById('ufActive').checked;
+  const assignedProjectIds = Array.from(document.querySelectorAll('.ufProjectChk:checked')).map((el) => el.value);
+  const assignedChecklistCategoryIds = Array.from(document.querySelectorAll('.ufCatChk:checked')).map((el) => el.value);
+  const errEl = document.getElementById('ufError');
+  const btn = document.getElementById('ufSubmitBtn');
+  errEl.textContent = '';
+
+  if (editing) {
+    btn.disabled = true; btn.textContent = 'در حال ذخیره…';
+    try {
+      await db.collection('users').doc(editing.id).update({
+        displayName, roleId, active, assignedProjectIds, assignedChecklistCategoryIds,
+      });
+      renderUsersAdmin();
+    } catch (err) {
+      console.error(err);
+      errEl.textContent = 'خطا در ذخیره: ' + (err.message || err);
+      btn.disabled = false; btn.textContent = 'ذخیره تغییرات';
+    }
+    return;
+  }
+
+  const username = document.getElementById('ufUsername').value.trim();
+  const password = document.getElementById('ufPassword').value;
+  if (!username || !password || password.length < 6) {
+    errEl.textContent = 'نام کاربری و رمز عبور (حداقل ۶ کاراکتر) را وارد کنید.';
+    return;
+  }
+
+  btn.disabled = true; btn.textContent = 'در حال ساخت…';
+  const existing = await db.collection('usernames').doc(username).get();
+  if (existing.exists) {
+    errEl.textContent = 'این نام کاربری قبلاً استفاده شده.';
+    btn.disabled = false; btn.textContent = 'ساخت کاربر';
+    return;
+  }
+
+  const email = username + '@raspina.local';
+  // یک نمونه‌ی موقت و جدا از Firebase می‌سازیم تا با ساخت کاربر جدید،
+  // نشست ورود مدیر (شما) قطع نشود.
+  const secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
+  try {
+    const secondaryAuth = secondaryApp.auth();
+    const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+    const newUid = cred.user.uid;
+    await secondaryAuth.signOut();
+
+    await db.collection('usernames').doc(username).set({ email });
+    await db.collection('users').doc(newUid).set({
+      username, displayName, roleId, active,
+      assignedProjectIds, assignedChecklistCategoryIds,
+    });
+
+    await secondaryApp.delete();
+    renderUsersAdmin();
+  } catch (err) {
+    console.error(err);
+    errEl.textContent = 'خطا در ساخت کاربر: ' + (err.code === 'auth/email-already-in-use'
+      ? 'این نام کاربری قبلاً استفاده شده.' : (err.message || err));
+    btn.disabled = false; btn.textContent = 'ساخت کاربر';
+    try { await secondaryApp.delete(); } catch (e) {}
+  }
+}
+
+/* ================= خروجی اکسل / PDF (فاز ۷) ================= */
+
+function exportReportExcel() {
+  const d = window.__reportData;
+  if (!d) return;
+  const wb = XLSX.utils.book_new();
+
+  const summarySheet = XLSX.utils.aoa_to_sheet([
+    ['پروژه', currentProject.name],
+    ['پیشرفت کلی (٪)', Math.round(d.overallProgress)],
+    ['مجموع نفر × روز', d.grandTotalWorkforce],
+    ['تعداد ثبت نیروی کاری', d.wfRecordsCount],
+  ]);
+  XLSX.utils.book_append_sheet(wb, summarySheet, 'خلاصه');
+
+  const catSheet = XLSX.utils.aoa_to_sheet([
+    ['دسته‌بندی', 'درصد پیشرفت'],
+    ...d.progressByCategory.map((c) => [c.name, Math.round(c.percent)]),
+  ]);
+  XLSX.utils.book_append_sheet(wb, catSheet, 'دسته‌بندی‌ها');
+
+  const blockSheet = XLSX.utils.aoa_to_sheet([
+    ['بلوک', 'درصد پیشرفت'],
+    ...d.progressByBlock.map((b) => [b.name, Math.round(b.percent)]),
+  ]);
+  XLSX.utils.book_append_sheet(wb, blockSheet, 'بلوک‌ها');
+
+  const wfSheet = XLSX.utils.aoa_to_sheet([
+    ['پیمانکار', 'مجموع نفر × روز'],
+    ...d.contractorRows.map((c) => [c.name, c.total]),
+  ]);
+  XLSX.utils.book_append_sheet(wb, wfSheet, 'نیروی کاری');
+
+  XLSX.writeFile(wb, `گزارش-${currentProject.name}.xlsx`);
+}
+
+function exportReportPdf() {
+  const d = window.__reportData;
+  if (!d) return;
+
+  const rows = (title, arr, key) => `
+    <h3>${title}</h3>
+    <table>
+      <tr><th>${key === 'contractor' ? 'پیمانکار' : 'عنوان'}</th><th>${key === 'contractor' ? 'مجموع نفر × روز' : 'درصد پیشرفت'}</th></tr>
+      ${arr.map((x) => `<tr><td>${escapeHtml(x.name)}</td><td>${key === 'contractor' ? x.total : Math.round(x.percent) + '٪'}</td></tr>`).join('')}
+    </table>`;
+
+  const html = `
+    <!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8">
+    <title>گزارش ${escapeHtml(currentProject.name)}</title>
+    <style>
+      body{ font-family:Tahoma, Arial, sans-serif; padding:24px; color:#111; }
+      h1{ font-size:20px; margin-bottom:4px; }
+      h3{ font-size:14px; margin:20px 0 8px; border-bottom:1px solid #ccc; padding-bottom:4px; }
+      table{ width:100%; border-collapse:collapse; font-size:13px; }
+      th, td{ border:1px solid #ccc; padding:6px 10px; text-align:right; }
+      th{ background:#f0f0f0; }
+      .big{ font-size:30px; font-weight:bold; text-align:center; margin:14px 0; }
+    </style></head>
+    <body>
+      <h1>گزارش پروژه: ${escapeHtml(currentProject.name)}</h1>
+      <div>تاریخ گزارش: ${new Date().toLocaleDateString('fa-IR')}</div>
+      <div class="big">پیشرفت کلی: ${Math.round(d.overallProgress)}٪</div>
+      ${rows('پیشرفت به تفکیک دسته‌بندی', d.progressByCategory, 'cat')}
+      ${rows('پیشرفت به تفکیک بلوک', d.progressByBlock, 'cat')}
+      ${rows('نیروی کاری', d.contractorRows, 'contractor')}
+      <script>window.onload = () => window.print();</script>
+    </body></html>`;
+
+  const w = window.open('', '_blank');
+  w.document.write(html);
+  w.document.close();
 }
 
 /* ================= مسیر اصلی ================= */
