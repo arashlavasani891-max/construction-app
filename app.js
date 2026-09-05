@@ -34,6 +34,59 @@ function escapeHtml(str) {
 }
 function isAdminUser() { return myProfile && myProfile.roleId === 'admin'; }
 
+/* ================= پوسته‌ی روشن/تیره ================= */
+
+function currentTheme() { return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'; }
+function applyTheme(theme) {
+  if (theme === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+  else document.documentElement.removeAttribute('data-theme');
+  const btn = document.getElementById('themeToggleBtn');
+  if (btn) btn.textContent = theme === 'dark' ? '☀️' : '🌙';
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B1220' : '#F6F7FA');
+  try { localStorage.setItem('raspina_theme', theme); } catch (e) {}
+}
+function toggleTheme() { applyTheme(currentTheme() === 'dark' ? 'light' : 'dark'); }
+applyTheme(currentTheme()); // هماهنگ‌سازی آیکون دکمه با پوسته‌ی فعلی صفحه
+
+/* ================= به‌خاطر سپردن نام کاربری و رمز عبور ================= */
+
+function getRemembered() {
+  try { return JSON.parse(localStorage.getItem('raspina_remember') || 'null'); } catch (e) { return null; }
+}
+function setRemembered(username, password) {
+  try { localStorage.setItem('raspina_remember', JSON.stringify({ username, password })); } catch (e) {}
+}
+function clearRemembered() {
+  try { localStorage.removeItem('raspina_remember'); } catch (e) {}
+}
+let rememberMeOn = !!getRemembered();
+function toggleRemember() {
+  rememberMeOn = !rememberMeOn;
+  const btn = document.getElementById('rememberBtn');
+  if (btn) {
+    btn.classList.toggle('active', rememberMeOn);
+    const chk = btn.querySelector('.remember-check');
+    if (chk) chk.textContent = rememberMeOn ? '✓' : '';
+  }
+  if (!rememberMeOn) clearRemembered();
+}
+
+/* ================= بازیابی از خطای بارگذاری ================= */
+
+let lastFailedAction = null;
+function showLoadError(message, retryFn) {
+  lastFailedAction = retryFn;
+  appEl.innerHTML = `
+    <div class="center-screen">
+      <img src="./icon-192.png" alt="راسپینا">
+      <h2>خطا در بارگذاری</h2>
+      <p>${escapeHtml(message)}</p>
+      <button class="btn-primary" onclick="retryLastAction()">تلاش مجدد</button>
+    </div>`;
+}
+function retryLastAction() { if (lastFailedAction) lastFailedAction(); }
+
 // همه‌ی صفحات از این تابع برای تنظیم هدر استفاده می‌کنند تا دکمه‌ی بازگشت همیشه درست باشد.
 function setHeader(screenName, title, backFn) {
   currentScreen = screenName;
@@ -49,13 +102,18 @@ function renderLogin(errorMsg) {
   currentScreen = 'login';
   headerRight.innerHTML = '';
   headerSub.textContent = 'راسپینا';
+  const remembered = getRemembered();
+  rememberMeOn = !!remembered;
   appEl.innerHTML = `
     <div class="center-screen">
       <img src="./icon-192.png" alt="راسپینا">
       <h2>ورود به سامانه</h2>
       <p>نام کاربری و رمز عبور خود را وارد کنید.</p>
-      <input id="loginUsername" class="auth-input" placeholder="نام کاربری" autocomplete="username">
-      <input id="loginPassword" class="auth-input" type="password" placeholder="رمز عبور" autocomplete="current-password">
+      <input id="loginUsername" class="auth-input" placeholder="نام کاربری" autocomplete="username" value="${remembered ? escapeHtml(remembered.username) : ''}">
+      <input id="loginPassword" class="auth-input" type="password" placeholder="رمز عبور" autocomplete="current-password" value="${remembered ? escapeHtml(remembered.password) : ''}">
+      <button type="button" id="rememberBtn" class="remember-btn ${rememberMeOn ? 'active' : ''}" onclick="toggleRemember()">
+        <span class="remember-check">${rememberMeOn ? '✓' : ''}</span> من را به خاطر بسپار
+      </button>
       ${errorMsg ? `<div class="auth-error">${escapeHtml(errorMsg)}</div>` : ''}
       <button id="loginBtn" class="auth-btn">ورود</button>
       <button class="btn-danger" style="margin-top:14px;" onclick="renderSignup()">حساب ندارید؟ ثبت‌نام کنید</button>
@@ -80,6 +138,7 @@ async function doLogin() {
     if (!usernameDoc.exists) throw { code: 'custom/username-not-found' };
     const email = usernameDoc.data().email;
     await auth.signInWithEmailAndPassword(email, password);
+    if (rememberMeOn) setRemembered(username, password); else clearRemembered();
   } catch (err) {
     loginBusy = false;
     renderLogin(loginErrorMessage(err));
@@ -96,6 +155,7 @@ function loginErrorMessage(err) {
 }
 
 function doLogout() {
+  if (!confirm('آیا مطمئن هستید که می‌خواهید از حساب کاربری خارج شوید؟')) return;
   if (projectsUnsub) { projectsUnsub(); projectsUnsub = null; }
   currentProject = null;
   auth.signOut();
@@ -303,13 +363,23 @@ function drawBuilder() {
   drawBlocks();
 }
 
+function rangeOptions(min, max, selected) {
+  const sel = parseInt(selected);
+  let html = '';
+  for (let i = min; i <= max; i++) html += `<option value="${i}" ${sel === i ? 'selected' : ''}>${i}</option>`;
+  return html;
+}
+
 function drawBlocks() {
   const host = document.getElementById('blocksHost');
   host.innerHTML = builderBlocks.map((b, bi) => `
     <div class="subcard">
       <div class="subcard-head">
         <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(b.name)}" oninput="builderBlocks[${bi}].name=this.value">
-        ${builderBlocks.length > 1 ? `<button class="icon-btn" onclick="removeBlock(${bi})">✕</button>` : ''}
+        <div style="display:flex; gap:2px;">
+          <button class="icon-btn" title="کپی بلوک" onclick="duplicateBuilderBlock(${bi})">⧉</button>
+          ${builderBlocks.length > 1 ? `<button class="icon-btn" onclick="removeBlock(${bi})">✕</button>` : ''}
+        </div>
       </div>
       ${b.groups.map((g, gi) => drawGroup(b, bi, g, gi)).join('')}
       <button class="btn-secondary" onclick="addGroup(${bi})">+ افزودن گروه طبقه</button>
@@ -332,14 +402,17 @@ function drawGroup(block, bi, g, gi) {
       ${isResidential ? `
         <div class="row-2">
           <div><label class="field-label">از طبقه</label>
-            <input type="number" class="field-input" value="${g.floorStart}" oninput="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();"></div>
+            <select class="field-input" onchange="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();">${rangeOptions(1, 60, g.floorStart)}</select></div>
           <div><label class="field-label">تا طبقه</label>
-            <input type="number" class="field-input" value="${g.floorEnd}" oninput="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();"></div>
+            <select class="field-input" onchange="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();">${rangeOptions(1, 60, g.floorEnd)}</select></div>
         </div>` : `
         <label class="field-label">تعداد طبقه از این نوع</label>
-        <input type="number" class="field-input" value="${g.repeatCount}" oninput="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">`}
-      <label class="field-label">تعداد واحد در هر طبقه (۰ = بدون واحد)</label>
-      <input type="number" class="field-input" value="${g.unitsPerFloor}" oninput="builderBlocks[${bi}].groups[${gi}].unitsPerFloor=this.value; refreshTotals();">
+        <select class="field-input" onchange="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">${rangeOptions(1, 30, g.repeatCount)}</select>`}
+      <label class="field-label">تعداد واحد در هر طبقه</label>
+      <select class="field-input" onchange="builderBlocks[${bi}].groups[${gi}].unitsPerFloor=this.value; refreshTotals();">
+        <option value="0" ${parseInt(g.unitsPerFloor) === 0 ? 'selected' : ''}>۰ (بدون واحد)</option>
+        ${rangeOptions(1, 40, g.unitsPerFloor)}
+      </select>
     </div>`;
 }
 
@@ -347,6 +420,14 @@ function addBlock() { builderBlocks.push(newBlock()); drawBlocks(); refreshTotal
 function removeBlock(i) { builderBlocks.splice(i, 1); drawBlocks(); refreshTotals(); }
 function addGroup(bi) { builderBlocks[bi].groups.push(newFloorGroup()); drawBlocks(); refreshTotals(); }
 function removeGroup(bi, gi) { builderBlocks[bi].groups.splice(gi, 1); drawBlocks(); refreshTotals(); }
+
+function duplicateBuilderBlock(bi) {
+  const original = builderBlocks[bi];
+  const copy = { name: original.name + ' (کپی)', groups: original.groups.map((g) => ({ ...g })) };
+  builderBlocks.splice(bi + 1, 0, copy);
+  drawBlocks();
+  refreshTotals();
+}
 
 function refreshTotals() {
   const totals = computeBuilderTotals();
@@ -421,8 +502,13 @@ async function openProject(projectId) {
 
   setHeader('projectHome', p.name, 'renderProjectList()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
-  await reloadCurrentProjectStructure();
-  renderProjectHome();
+  try {
+    await reloadCurrentProjectStructure();
+    renderProjectHome();
+  } catch (err) {
+    console.error(err);
+    showLoadError('خطا در دریافت اطلاعات پروژه. اتصال اینترنت خود را بررسی کرده و دوباره تلاش کنید.', () => openProject(projectId));
+  }
 }
 
 async function reloadCurrentProjectStructure() {
@@ -538,7 +624,10 @@ function drawEditBlocks() {
       <div class="subcard-head">
         <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(b.name)}"
                onchange="renameBlock('${b.id}', this.value)">
-        <button class="icon-btn" onclick="deleteBlockConfirm('${b.id}')">حذف بلوک</button>
+        <div style="display:flex; gap:2px;">
+          <button class="icon-btn" title="کپی بلوک" onclick="duplicateBlockInProject('${b.id}')">⧉</button>
+          <button class="icon-btn" onclick="deleteBlockConfirm('${b.id}')">حذف بلوک</button>
+        </div>
       </div>
       ${b.floors.map((f) => `
         <div class="subcard" style="background:var(--panel);">
@@ -587,6 +676,40 @@ async function deleteBlockConfirm(blockId) {
   await batch.commit();
   await reloadCurrentProjectStructure();
   drawEditBlocks();
+}
+
+async function duplicateBlockInProject(blockId) {
+  const block = currentBlocks.find((b) => b.id === blockId);
+  if (!block) return;
+  if (!confirm(`یک کپی از بلوک «${block.name}» با همان طبقات و واحدها ساخته شود؟`)) return;
+
+  try {
+    const newBlockRef = db.collection('blocks').doc();
+    const writes = [{ ref: newBlockRef, data: { projectId: currentProject.id, name: block.name + ' (کپی)', order: currentBlocks.length } }];
+
+    for (const f of block.floors) {
+      const newFloorRef = db.collection('floors').doc();
+      writes.push({ ref: newFloorRef, data: { blockId: newBlockRef.id, projectId: currentProject.id, name: f.name, order: f.order || 0, type: f.type || 'residential', unitsCount: f.unitsCount || 0 } });
+      const unitsSnap = await db.collection('units').where('floorId', '==', f.id).get();
+      unitsSnap.docs.forEach((u) => {
+        const newUnitRef = db.collection('units').doc();
+        writes.push({ ref: newUnitRef, data: { floorId: newFloorRef.id, blockId: newBlockRef.id, projectId: currentProject.id, name: u.data().name } });
+      });
+    }
+
+    for (let i = 0; i < writes.length; i += 400) {
+      const chunk = writes.slice(i, i + 400);
+      const batch = db.batch();
+      chunk.forEach((w) => batch.set(w.ref, w.data));
+      await batch.commit();
+    }
+
+    await reloadCurrentProjectStructure();
+    drawEditBlocks();
+  } catch (err) {
+    console.error(err);
+    alert('خطا در کپی بلوک: ' + (err.message || err));
+  }
 }
 
 async function addFloorToBlock(blockId) {
@@ -765,14 +888,20 @@ async function renderUsersAdmin() {
   setHeader('usersAdmin', 'کاربران', 'renderAdminHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
 
-  const [usersSnap, projSnap, catSnap] = await Promise.all([
-    db.collection('users').get(),
-    db.collection('projects').get(),
-    db.collection('checklistCategories').orderBy('order').get(),
-  ]);
-  usersAdminCache = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.username || '').localeCompare(b.username || '', 'fa'));
-  usersAdminProjectsCache = projSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  usersAdminCategoriesCache = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  try {
+    const [usersSnap, projSnap, catSnap] = await Promise.all([
+      db.collection('users').get(),
+      db.collection('projects').get(),
+      db.collection('checklistCategories').orderBy('order').get(),
+    ]);
+    usersAdminCache = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.username || '').localeCompare(b.username || '', 'fa'));
+    usersAdminProjectsCache = projSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    usersAdminCategoriesCache = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error(err);
+    showLoadError('خطا در دریافت لیست کاربران. دوباره تلاش کنید.', renderUsersAdmin);
+    return;
+  }
   drawUsersAdmin();
 }
 
@@ -782,16 +911,34 @@ function drawUsersAdmin() {
     <div class="section-title">لیست کاربران</div>
     ${usersAdminCache.map((u) => `
       <div class="card">
-        <div class="card-row" onclick="renderUserForm('${u.id}')">
-          <div>
+        <div class="card-row">
+          <div style="cursor:pointer; flex:1; min-width:0;" onclick="renderUserForm('${u.id}')">
             <div class="card-title">${escapeHtml(u.username)}</div>
             <div class="card-sub">${u.roleId === 'admin' ? 'مدیر' : 'کاربر عادی'} — ${(u.assignedProjectIds || []).length} پروژه</div>
           </div>
-          ${u.active === false ? '<span class="chip off">غیرفعال</span>' : '<span class="arrow">‹</span>'}
+          <div style="display:flex; align-items:center; gap:4px;">
+            ${u.active === false ? '<span class="chip off">غیرفعال</span>' : ''}
+            <button class="icon-btn" style="color:var(--red);" title="حذف کاربر" onclick="deleteUserConfirm('${u.id}','${escapeHtml(u.username)}')">🗑</button>
+            <span class="arrow" style="cursor:pointer;" onclick="renderUserForm('${u.id}')">‹</span>
+          </div>
         </div>
       </div>`).join('') || '<div class="card flat">کاربری ثبت نشده.</div>'}
     <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="renderUserForm(null)">+ کاربر جدید</button>
   `;
+}
+
+async function deleteUserConfirm(userId, username) {
+  if (currentUser && userId === currentUser.uid) { alert('نمی‌توانید حساب کاربری خودتان را حذف کنید.'); return; }
+  if (!confirm(`کاربر «${username}» حذف شود؟ این کار قابل بازگشت نیست.`)) return;
+  try {
+    await db.collection('users').doc(userId).delete();
+    await db.collection('usernames').doc(username).delete();
+    usersAdminCache = usersAdminCache.filter((u) => u.id !== userId);
+    drawUsersAdmin();
+  } catch (err) {
+    console.error(err);
+    alert('خطا در حذف کاربر: ' + (err.message || err));
+  }
 }
 
 function renderUserForm(userId) {
@@ -844,6 +991,7 @@ function renderUserForm(userId) {
     <button id="ufSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitUserForm('${userId || ''}')">
       ${editing ? 'ذخیره تغییرات' : 'ساخت کاربر'}
     </button>
+    ${editing ? `<button class="btn-danger" style="display:block; margin:14px auto 0;" onclick="deleteUserConfirm('${editing.id}','${escapeHtml(editing.username)}')">حذف این کاربر</button>` : ''}
   `;
 }
 
@@ -910,8 +1058,15 @@ async function submitUserForm(userId) {
 
 async function openChecklistModule() {
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
-  const snap = await db.collection('checklistCategories').orderBy('order').get();
-  let cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  let cats;
+  try {
+    const snap = await db.collection('checklistCategories').orderBy('order').get();
+    cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  } catch (err) {
+    console.error(err);
+    showLoadError('خطا در دریافت چک‌لیست. دوباره تلاش کنید.', openChecklistModule);
+    return;
+  }
   if (!isAdminUser()) {
     const allowed = myProfile.assignedChecklistCategoryIds || [];
     cats = cats.filter((c) => allowed.includes(c.id));
@@ -1047,8 +1202,15 @@ async function openWorkforceModule() {
   setHeader('workforce', 'نیروی کاری — ' + currentProject.name, 'renderProjectHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
 
-  const snap = await db.collection('contractors').orderBy('name').get();
-  const contractors = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((c) => c.active !== false);
+  let contractors;
+  try {
+    const snap = await db.collection('contractors').orderBy('name').get();
+    contractors = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((c) => c.active !== false);
+  } catch (err) {
+    console.error(err);
+    showLoadError('خطا در دریافت لیست پیمانکاران. دوباره تلاش کنید.', openWorkforceModule);
+    return;
+  }
 
   appEl.innerHTML = `
     <div class="section-title">ثبت استقرار نفرات</div>
@@ -1159,12 +1321,19 @@ async function openReportsModule() {
   setHeader('reports', 'داشبورد و گزارش — ' + currentProject.name, 'renderProjectHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال محاسبه…</span></span></div>`;
 
-  const [progSnap, catSnap, itemSnap, wfSnap] = await Promise.all([
-    db.collection('progressRecords').where('projectId', '==', currentProject.id).get(),
-    db.collection('checklistCategories').orderBy('order').get(),
-    db.collection('checklistItems').get(),
-    db.collection('workforceRecords').where('projectId', '==', currentProject.id).get(),
-  ]);
+  let progSnap, catSnap, itemSnap, wfSnap;
+  try {
+    [progSnap, catSnap, itemSnap, wfSnap] = await Promise.all([
+      db.collection('progressRecords').where('projectId', '==', currentProject.id).get(),
+      db.collection('checklistCategories').orderBy('order').get(),
+      db.collection('checklistItems').get(),
+      db.collection('workforceRecords').where('projectId', '==', currentProject.id).get(),
+    ]);
+  } catch (err) {
+    console.error(err);
+    showLoadError('خطا در محاسبه‌ی گزارش. دوباره تلاش کنید.', openReportsModule);
+    return;
+  }
 
   const allRecords = progSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
     .filter((r) => r.createdAt && r.createdAt.toMillis)

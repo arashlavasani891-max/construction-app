@@ -6,7 +6,7 @@
 <title>راسپینا | کنترل پروژه ساختمان</title>
 
 <link rel="manifest" href="./manifest.json">
-<meta name="theme-color" content="#0B1220">
+<meta name="theme-color" content="#F6F7FA">
 <link rel="icon" href="./icon-192.png">
 <link rel="apple-touch-icon" href="./icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
@@ -17,8 +17,28 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;700;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
 
+<script>
+  // پیش از رنگ‌آمیزی صفحه، پوسته‌ی ذخیره‌شده (در صورت وجود) اعمال می‌شود تا صفحه چشمک نزند.
+  (function(){
+    try {
+      var t = localStorage.getItem('raspina_theme');
+      if (t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+    } catch (e) {}
+  })();
+</script>
+
 <style>
   :root{
+    /* پوسته‌ی روشن (پیش‌فرض) */
+    --bg:#F6F7FA; --panel:#FFFFFF; --panel-2:#F0F2F6; --line:#E2E6EE;
+    --ink:#1B2433; --ink-soft:#69738A; --ink-faint:#9AA3B5;
+    --gold:#B8862E; --gold-dim:#B8862E1F;
+    --steel:#3E6690; --steel-dim:#3E669022;
+    --green:#2E8F5C; --green-dim:#2E8F5C22;
+    --red:#D1453A; --red-dim:#D1453A22;
+  }
+  :root[data-theme="dark"]{
+    /* پوسته‌ی تیره */
     --bg:#0B1220; --panel:#121B2E; --panel-2:#182337; --line:#25324A;
     --ink:#EEF1F6; --ink-soft:#8E9BB3; --ink-faint:#576076;
     --gold:#D8B54C; --gold-dim:#D8B54C22;
@@ -29,7 +49,7 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0; overflow-x:hidden; max-width:100%;}
   body{ background:var(--bg); color:var(--ink); font-family:'Vazirmatn',sans-serif; min-height:100vh; padding-bottom:40px; }
-  header{ background:linear-gradient(135deg,#0E1830,#0B1220 60%); padding:20px 18px 18px; border-bottom:1px solid var(--line); position:relative; }
+  header{ background:linear-gradient(135deg, var(--panel-2), var(--bg) 60%); padding:20px 18px 18px; border-bottom:1px solid var(--line); position:relative; }
   header::after{ content:""; position:absolute; right:0; bottom:-1px; width:64px; height:3px; background:var(--gold); border-radius:3px 3px 0 0; }
   .head-row{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
   .head-left{ display:flex; align-items:center; gap:10px; min-width:0; flex:1 1 auto; overflow:hidden; }
@@ -39,6 +59,10 @@
   .role-badge{ font-family:'JetBrains Mono',monospace; font-size:10px; padding:4px 10px; border-radius:20px; background:var(--gold-dim); color:var(--gold); white-space:nowrap; }
   .signout-btn{ background:none; border:1px solid var(--line); color:var(--ink-soft); font-size:11px; padding:6px 12px; border-radius:20px; font-family:'Vazirmatn'; cursor:pointer; margin-inline-start:6px; }
   .back-btn{ background:none; border:1px solid var(--line); color:var(--ink-soft); font-size:11px; padding:6px 12px; border-radius:20px; font-family:'Vazirmatn'; cursor:pointer; }
+  .theme-toggle-btn{ background:var(--panel-2); border:1px solid var(--line); color:var(--ink-soft); width:32px; height:32px; border-radius:50%; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; padding:0; flex-shrink:0; }
+  .remember-btn{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%; max-width:320px; background:var(--panel-2); border:1.5px solid var(--line); color:var(--ink-soft); font-family:'Vazirmatn'; font-weight:700; font-size:12.5px; padding:10px 14px; border-radius:12px; cursor:pointer; margin-bottom:6px; }
+  .remember-btn.active{ border-color:var(--gold); color:var(--gold); background:var(--gold-dim); }
+  .remember-check{ width:16px; height:16px; border-radius:4px; border:1.5px solid currentColor; display:inline-flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0; }
   .wrap{ max-width:640px; margin:0 auto; padding:0 14px; }
 
   #splashScreen{ position:fixed; inset:0; z-index:999; background:var(--bg); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; transition:opacity .35s ease; }
@@ -122,7 +146,10 @@
           <p id="headerSub">راسپینا</p>
         </div>
       </div>
-      <div id="headerRight" style="display:flex; align-items:center; gap:6px;"></div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button id="themeToggleBtn" class="theme-toggle-btn" onclick="toggleTheme()" title="تغییر پوسته">🌙</button>
+        <div id="headerRight" style="display:flex; align-items:center; gap:6px;"></div>
+      </div>
     </div>
   </div>
 </header>
