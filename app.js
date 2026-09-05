@@ -1300,3 +1300,67 @@ auth.onAuthStateChanged(async (user) => {
 
 window.addEventListener('offline', () => setStatus(false));
 window.addEventListener('online', () => setStatus(true));
+
+/* ================= نصب روی گوشی (PWA) ================= */
+
+let deferredInstallPrompt = null;
+let installBtnEl = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  showInstallButton();
+});
+
+window.addEventListener('appinstalled', () => {
+  deferredInstallPrompt = null;
+  hideInstallButton();
+});
+
+function showInstallButton() {
+  if (installBtnEl) return;
+  installBtnEl = document.createElement('button');
+  installBtnEl.textContent = '📲 نصب برنامه';
+  installBtnEl.className = 'fab';
+  installBtnEl.style.left = 'auto';
+  installBtnEl.style.right = '18px';
+  installBtnEl.onclick = async () => {
+    if (!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    hideInstallButton();
+  };
+  document.body.appendChild(installBtnEl);
+}
+function hideInstallButton() {
+  if (installBtnEl) { installBtnEl.remove(); installBtnEl = null; }
+}
+
+function isIos() {
+  return /iphone|ipad|ipod/i.test(navigator.userAgent);
+}
+function isInStandaloneMode() {
+  return window.navigator.standalone === true ||
+    window.matchMedia('(display-mode: standalone)').matches;
+}
+if (isIos() && !isInStandaloneMode()) {
+  window.addEventListener('load', () => {
+    const banner = document.createElement('div');
+    banner.style.cssText = 'position:fixed; left:14px; right:14px; bottom:14px; background:var(--panel); border:1px solid var(--gold); border-radius:14px; padding:12px 14px; font-size:12px; color:var(--ink); z-index:30; display:flex; align-items:center; justify-content:space-between; gap:10px;';
+    banner.innerHTML = `
+      <span>برای نصب: دکمه Share را بزنید و «Add to Home Screen» را انتخاب کنید.</span>
+      <button style="background:none;border:none;color:var(--ink-faint);font-size:16px;cursor:pointer;" onclick="this.parentElement.remove()">✕</button>
+    `;
+    document.body.appendChild(banner);
+  });
+}
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js').catch((err) => {
+      console.error('Service worker registration failed:', err);
+    });
+  });
+}
+
