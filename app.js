@@ -1,4 +1,4 @@
-/* ===== راسپینا — کنترل پروژه ساختمان — منطق اصلی اپ (فاز ۱ تا ۴) ===== */
+/* ===== راسپینا — کنترل پروژه ساختمان — منطق اصلی اپ ===== */
 
 firebase.initializeApp(firebaseConfig);
 const auth = firebase.auth();
@@ -8,10 +8,12 @@ let currentUser = null;
 let myProfile = null;
 let loginBusy = false;
 
+let currentScreen = 'login';   // برای تشخیص اینکه الان کجای برنامه هستیم (برای listenerها و دکمه‌ی بازگشت)
+
 let myProjects = [];
 let projectsUnsub = null;
 let currentProject = null;
-let currentBlocks = [];        // بلوک‌های پروژه‌ی جاری (هرکدام با floors)
+let currentBlocks = [];
 
 const appEl = document.getElementById('app');
 const headerRight = document.getElementById('headerRight');
@@ -19,10 +21,7 @@ const headerSub = document.getElementById('headerSub');
 const statusDot = document.getElementById('statusDot');
 const syncNote = document.getElementById('syncNote');
 
-function hideSplash() {
-  const s = document.getElementById('splashScreen');
-  if (s) s.classList.add('hide');
-}
+function hideSplash() { const s = document.getElementById('splashScreen'); if (s) s.classList.add('hide'); }
 function setStatus(online) {
   if (!statusDot || !syncNote) return;
   statusDot.classList.toggle('off', !online);
@@ -35,9 +34,19 @@ function escapeHtml(str) {
 }
 function isAdminUser() { return myProfile && myProfile.roleId === 'admin'; }
 
+// همه‌ی صفحات از این تابع برای تنظیم هدر استفاده می‌کنند تا دکمه‌ی بازگشت همیشه درست باشد.
+function setHeader(screenName, title, backFn) {
+  currentScreen = screenName;
+  headerSub.textContent = title;
+  const backBtn = backFn ? `<button class="back-btn" onclick="${backFn}">بازگشت</button>` : '';
+  const signout = `<button class="signout-btn" onclick="doLogout()">خروج</button>`;
+  headerRight.innerHTML = backFn ? (backBtn + signout) : signout;
+}
+
 /* ================= ورود ================= */
 
 function renderLogin(errorMsg) {
+  currentScreen = 'login';
   headerRight.innerHTML = '';
   headerSub.textContent = 'راسپینا';
   appEl.innerHTML = `
@@ -53,14 +62,49 @@ function renderLogin(errorMsg) {
     </div>
   `;
   document.getElementById('loginBtn').addEventListener('click', doLogin);
-  document.getElementById('loginPassword').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doLogin();
-  });
+  document.getElementById('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 }
 
-/* ---------- ثبت‌نام خودکار (نیاز به تایید مدیر) ---------- */
+async function doLogin() {
+  if (loginBusy) return;
+  const username = (document.getElementById('loginUsername').value || '').trim();
+  const password = document.getElementById('loginPassword').value || '';
+  if (!username || !password) { renderLogin('نام کاربری و رمز عبور را وارد کنید.'); return; }
+
+  loginBusy = true;
+  const btn = document.getElementById('loginBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'در حال بررسی…'; }
+
+  try {
+    const usernameDoc = await db.collection('usernames').doc(username).get();
+    if (!usernameDoc.exists) throw { code: 'custom/username-not-found' };
+    const email = usernameDoc.data().email;
+    await auth.signInWithEmailAndPassword(email, password);
+  } catch (err) {
+    loginBusy = false;
+    renderLogin(loginErrorMessage(err));
+  }
+}
+
+function loginErrorMessage(err) {
+  const code = err && err.code;
+  if (code === 'custom/username-not-found') return 'نام کاربری یافت نشد.';
+  if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') return 'رمز عبور اشتباه است.';
+  if (code === 'auth/too-many-requests') return 'تعداد تلاش‌ها زیاد بوده، کمی صبر کنید.';
+  if (code === 'auth/network-request-failed') return 'مشکل در اتصال اینترنت.';
+  return 'ورود ناموفق بود، دوباره تلاش کنید.';
+}
+
+function doLogout() {
+  if (projectsUnsub) { projectsUnsub(); projectsUnsub = null; }
+  currentProject = null;
+  auth.signOut();
+}
+
+/* ---------- ثبت‌نام خودکار ---------- */
 
 function renderSignup(errorMsg) {
+  currentScreen = 'signup';
   headerRight.innerHTML = '';
   headerSub.textContent = 'راسپینا';
   appEl.innerHTML = `
@@ -106,7 +150,6 @@ async function doSignup() {
       username, displayName, roleId: 'user', active: false,
       assignedProjectIds: [], assignedChecklistCategoryIds: [],
     });
-    // بعد از این، onAuthStateChanged خودش صفحه‌ی «در انتظار تایید» را نشان می‌دهد.
   } catch (err) {
     console.error(err);
     let msg = 'ثبت‌نام ناموفق بود.';
@@ -115,43 +158,8 @@ async function doSignup() {
   }
 }
 
-async function doLogin() {
-  if (loginBusy) return;
-  const username = (document.getElementById('loginUsername').value || '').trim();
-  const password = document.getElementById('loginPassword').value || '';
-  if (!username || !password) { renderLogin('نام کاربری و رمز عبور را وارد کنید.'); return; }
-
-  loginBusy = true;
-  const btn = document.getElementById('loginBtn');
-  if (btn) { btn.disabled = true; btn.textContent = 'در حال بررسی…'; }
-
-  try {
-    const usernameDoc = await db.collection('usernames').doc(username).get();
-    if (!usernameDoc.exists) throw { code: 'custom/username-not-found' };
-    const email = usernameDoc.data().email;
-    await auth.signInWithEmailAndPassword(email, password);
-  } catch (err) {
-    loginBusy = false;
-    renderLogin(loginErrorMessage(err));
-  }
-}
-
-function loginErrorMessage(err) {
-  const code = err && err.code;
-  if (code === 'custom/username-not-found') return 'نام کاربری یافت نشد.';
-  if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') return 'رمز عبور اشتباه است.';
-  if (code === 'auth/too-many-requests') return 'تعداد تلاش‌ها زیاد بوده، کمی صبر کنید.';
-  if (code === 'auth/network-request-failed') return 'مشکل در اتصال اینترنت.';
-  return 'ورود ناموفق بود، دوباره تلاش کنید.';
-}
-
-function doLogout() {
-  if (projectsUnsub) { projectsUnsub(); projectsUnsub = null; }
-  currentProject = null;
-  auth.signOut();
-}
-
 function renderBlocked() {
+  currentScreen = 'blocked';
   headerSub.textContent = myProfile && myProfile.username ? myProfile.username : '';
   headerRight.innerHTML = `<button class="signout-btn" onclick="doLogout()">خروج</button>`;
   appEl.innerHTML = `
@@ -159,6 +167,20 @@ function renderBlocked() {
       <img src="./icon-192.png" alt="راسپینا">
       <h2>در انتظار تایید مدیر</h2>
       <p>حساب کاربری شما هنوز توسط مدیر سیستم تایید یا فعال نشده است. لطفاً بعداً دوباره امتحان کنید یا با مدیر تماس بگیرید.</p>
+    </div>
+  `;
+}
+
+/* ================= خانه‌ی مدیر (پنل مدیریت) ================= */
+
+function renderAdminHome() {
+  setHeader('adminHome', 'پنل مدیریت', null);
+  appEl.innerHTML = `
+    <div class="module-grid">
+      <div class="module-tile" onclick="renderProjectList()"><div class="em">🏢</div><div class="lbl">پروژه‌ها</div></div>
+      <div class="module-tile" onclick="renderUsersAdmin()"><div class="em">👤</div><div class="lbl">کاربران</div></div>
+      <div class="module-tile" onclick="renderChecklistAdmin()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
+      <div class="module-tile" onclick="renderContractorsAdmin()"><div class="em">🏗️</div><div class="lbl">پیمانکاران</div></div>
     </div>
   `;
 }
@@ -173,11 +195,9 @@ function startProjectsListener() {
       .orderBy('createdAt', 'desc')
       .onSnapshot((snap) => {
         myProjects = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        if (!currentProject) renderProjectList();
-      }, (err) => {
-        console.error(err);
-        appEl.innerHTML = `<div class="center-screen"><p class="auth-error">خطا در دریافت پروژه‌ها.</p></div>`;
-      });
+        if (currentScreen === 'projectList') renderProjectList();
+      }, (err) => { console.error(err); });
+    renderAdminHome();
   } else {
     loadProjectsForUser();
   }
@@ -187,27 +207,19 @@ async function loadProjectsForUser() {
   const ids = myProfile.assignedProjectIds || [];
   if (ids.length === 0) { myProjects = []; renderProjectList(); return; }
   const docs = await Promise.all(ids.map((id) => db.collection('projects').doc(id).get()));
-  myProjects = docs.filter((d) => d.exists && d.data().active !== false)
-    .map((d) => ({ id: d.id, ...d.data() }));
+  myProjects = docs.filter((d) => d.exists && d.data().active !== false).map((d) => ({ id: d.id, ...d.data() }));
   renderProjectList();
 }
 
 function renderProjectList() {
   currentProject = null;
   const admin = isAdminUser();
-
-  headerSub.textContent = myProfile.username || '';
-  headerRight.innerHTML = `
-    ${admin ? '<button class="signout-btn" onclick="renderAdminPanel()">پنل مدیریت</button>' : ''}
-    <button class="signout-btn" onclick="doLogout()">خروج</button>
-  `;
+  setHeader('projectList', myProfile.username || '', admin ? 'renderAdminHome()' : null);
 
   let listHtml;
   if (myProjects.length === 0) {
-    listHtml = `
-      <div class="card flat" style="text-align:center; color:var(--ink-soft); font-size:13px; line-height:1.9;">
-        هیچ پروژه‌ای برای شما تعریف نشده است.${admin ? '' : '<br>با مدیر سیستم تماس بگیرید.'}
-      </div>`;
+    listHtml = `<div class="card flat" style="text-align:center; color:var(--ink-soft); font-size:13px; line-height:1.9;">
+      هیچ پروژه‌ای برای شما تعریف نشده است.${admin ? '' : '<br>با مدیر سیستم تماس بگیرید.'}</div>`;
   } else {
     listHtml = myProjects.map((p) => `
       <div class="card">
@@ -221,11 +233,7 @@ function renderProjectList() {
       </div>`).join('');
   }
 
-  appEl.innerHTML = `
-    <div class="section-title">پروژه‌ها</div>
-    ${listHtml}
-    ${admin ? '<div style="height:70px;"></div>' : ''}
-  `;
+  appEl.innerHTML = `<div class="section-title">پروژه‌ها</div>${listHtml}${admin ? '<div style="height:70px;"></div>' : ''}`;
 
   if (admin) {
     const fab = document.createElement('button');
@@ -245,25 +253,19 @@ function newBlock() { return { name: 'بلوک ' + (builderBlocks.length + 1), g
 
 function renderProjectBuilder() {
   builderBlocks = [newBlock()];
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectList()">بازگشت</button>`;
-  headerSub.textContent = 'ساخت پروژه جدید';
+  setHeader('projectBuilder', 'ساخت پروژه جدید', 'renderProjectList()');
   drawBuilder();
 }
 
 function computeBuilderTotals() {
   let floors = 0, units = 0;
   for (const b of builderBlocks) for (const g of b.groups) {
-    const fc = floorCountOf(g);
-    floors += fc;
-    units += fc * (parseInt(g.unitsPerFloor) || 0);
+    const fc = floorCountOf(g); floors += fc; units += fc * (parseInt(g.unitsPerFloor) || 0);
   }
   return { blocks: builderBlocks.length, floors, units };
 }
 function floorCountOf(g) {
-  if (g.type === 'residential') {
-    const s = parseInt(g.floorStart) || 1, e = parseInt(g.floorEnd) || 1;
-    return Math.max(0, e - s + 1);
-  }
+  if (g.type === 'residential') { const s = parseInt(g.floorStart) || 1, e = parseInt(g.floorEnd) || 1; return Math.max(0, e - s + 1); }
   return parseInt(g.repeatCount) || 1;
 }
 function floorLabelOf(g, index) {
@@ -306,8 +308,7 @@ function drawBlocks() {
   host.innerHTML = builderBlocks.map((b, bi) => `
     <div class="subcard">
       <div class="subcard-head">
-        <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(b.name)}"
-               oninput="builderBlocks[${bi}].name=this.value">
+        <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(b.name)}" oninput="builderBlocks[${bi}].name=this.value">
         ${builderBlocks.length > 1 ? `<button class="icon-btn" onclick="removeBlock(${bi})">✕</button>` : ''}
       </div>
       ${b.groups.map((g, gi) => drawGroup(b, bi, g, gi)).join('')}
@@ -331,18 +332,14 @@ function drawGroup(block, bi, g, gi) {
       ${isResidential ? `
         <div class="row-2">
           <div><label class="field-label">از طبقه</label>
-            <input type="number" class="field-input" value="${g.floorStart}"
-                   oninput="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();"></div>
+            <input type="number" class="field-input" value="${g.floorStart}" oninput="builderBlocks[${bi}].groups[${gi}].floorStart=this.value; refreshTotals();"></div>
           <div><label class="field-label">تا طبقه</label>
-            <input type="number" class="field-input" value="${g.floorEnd}"
-                   oninput="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();"></div>
+            <input type="number" class="field-input" value="${g.floorEnd}" oninput="builderBlocks[${bi}].groups[${gi}].floorEnd=this.value; refreshTotals();"></div>
         </div>` : `
         <label class="field-label">تعداد طبقه از این نوع</label>
-        <input type="number" class="field-input" value="${g.repeatCount}"
-               oninput="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">`}
+        <input type="number" class="field-input" value="${g.repeatCount}" oninput="builderBlocks[${bi}].groups[${gi}].repeatCount=this.value; refreshTotals();">`}
       <label class="field-label">تعداد واحد در هر طبقه (۰ = بدون واحد)</label>
-      <input type="number" class="field-input" value="${g.unitsPerFloor}"
-             oninput="builderBlocks[${bi}].groups[${gi}].unitsPerFloor=this.value; refreshTotals();">
+      <input type="number" class="field-input" value="${g.unitsPerFloor}" oninput="builderBlocks[${bi}].groups[${gi}].unitsPerFloor=this.value; refreshTotals();">
     </div>`;
 }
 
@@ -369,19 +366,16 @@ async function submitBuilder() {
   const btn = document.getElementById('submitBuilderBtn');
   if (!name) { errEl.textContent = 'نام پروژه را وارد کنید.'; return; }
   errEl.textContent = '';
-  btn.disabled = true;
-  btn.textContent = 'در حال ساخت…';
+  btn.disabled = true; btn.textContent = 'در حال ساخت…';
 
   try {
     const newProject = await createProjectWithStructure(name, code, desc, builderBlocks);
-    // به‌روزرسانی فوری لیست، بدون نیاز به منتظر ماندن برای Listener
     myProjects = [newProject, ...myProjects.filter((p) => p.id !== newProject.id)];
     renderProjectList();
   } catch (err) {
     console.error(err);
     errEl.textContent = 'خطا در ساخت پروژه: ' + (err.message || err);
-    btn.disabled = false;
-    btn.textContent = 'ساخت پروژه';
+    btn.disabled = false; btn.textContent = 'ساخت پروژه';
   }
 }
 
@@ -401,13 +395,10 @@ async function createProjectWithStructure(name, code, description, blocks) {
       const unitsPerFloor = parseInt(g.unitsPerFloor) || 0;
       for (let i = 0; i < fc; i++) {
         const floorRef = db.collection('floors').doc();
-        writes.push({ ref: floorRef, data: {
-          blockId: blockRef.id, projectId: projectRef.id, name: floorLabelOf(g, i),
-          order: floorOrder++, type: g.type, unitsCount: unitsPerFloor } });
+        writes.push({ ref: floorRef, data: { blockId: blockRef.id, projectId: projectRef.id, name: floorLabelOf(g, i), order: floorOrder++, type: g.type, unitsCount: unitsPerFloor } });
         for (let u = 1; u <= unitsPerFloor; u++) {
           const unitRef = db.collection('units').doc();
-          writes.push({ ref: unitRef, data: {
-            floorId: floorRef.id, blockId: blockRef.id, projectId: projectRef.id, name: 'واحد ' + u } });
+          writes.push({ ref: unitRef, data: { floorId: floorRef.id, blockId: blockRef.id, projectId: projectRef.id, name: 'واحد ' + u } });
         }
       }
     }
@@ -418,7 +409,6 @@ async function createProjectWithStructure(name, code, description, blocks) {
     chunk.forEach((w) => batch.set(w.ref, w.data));
     await batch.commit();
   }
-  // آبجکت محلی برای نمایش فوری (createdAt واقعی کمی بعد از سرور می‌رسد)
   return { id: projectRef.id, ...projectData, createdAt: { toMillis: () => nowLocal.getTime() } };
 }
 
@@ -429,23 +419,26 @@ async function openProject(projectId) {
   if (!p) return;
   currentProject = p;
 
-  headerSub.textContent = p.name;
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectList()">بازگشت</button>`;
+  setHeader('projectHome', p.name, 'renderProjectList()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+  await reloadCurrentProjectStructure();
+  renderProjectHome();
+}
 
-  const blocksSnap = await db.collection('blocks').where('projectId', '==', projectId).get();
+async function reloadCurrentProjectStructure() {
+  const blocksSnap = await db.collection('blocks').where('projectId', '==', currentProject.id).get();
   const blocks = blocksSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.order || 0) - (b.order || 0));
   for (const b of blocks) {
     const floorsSnap = await db.collection('floors').where('blockId', '==', b.id).get();
     b.floors = floorsSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b2) => (a.order || 0) - (b2.order || 0));
   }
   currentBlocks = blocks;
-  renderProjectHome();
 }
 
 function renderProjectHome() {
   const p = currentProject;
   const admin = isAdminUser();
+  setHeader('projectHome', p.name, 'renderProjectList()');
 
   const treeHtml = currentBlocks.map((b, i) => `
     <div class="tree-block">
@@ -472,8 +465,11 @@ function renderProjectHome() {
     <div class="section-title">ساختار پروژه</div>
     ${treeHtml || '<div class="card flat">بلوکی برای این پروژه تعریف نشده.</div>'}
     ${admin ? `
-      <div style="margin-top:18px;">
-        <button class="btn-danger" onclick="confirmDeactivateProject()">غیرفعال کردن این پروژه</button>
+      <div style="display:flex; gap:8px; margin-top:18px;">
+        <button class="btn-secondary" style="flex:1;" onclick="renderProjectEdit()">ویرایش پروژه</button>
+        ${p.active === false
+          ? `<button class="btn-secondary" style="flex:1;" onclick="setProjectActive(true)">فعال‌سازی پروژه</button>`
+          : `<button class="btn-secondary" style="flex:1; color:var(--red);" onclick="setProjectActive(false)">غیرفعال کردن</button>`}
       </div>` : ''}
   `;
 }
@@ -483,32 +479,159 @@ function toggleTreeBlock(i) {
   if (el) el.classList.toggle('open');
 }
 
-async function confirmDeactivateProject() {
+async function setProjectActive(makeActive) {
   if (!currentProject) return;
-  if (!confirm('این پروژه غیرفعال شود؟ اطلاعات آن حذف نمی‌شود.')) return;
-  await db.collection('projects').doc(currentProject.id).update({ active: false });
-  renderProjectList();
+  if (!makeActive && !confirm('این پروژه غیرفعال شود؟ اطلاعات آن حذف نمی‌شود.')) return;
+  await db.collection('projects').doc(currentProject.id).update({ active: makeActive });
+  currentProject.active = makeActive;
+  myProjects = myProjects.map((p) => (p.id === currentProject.id ? { ...p, active: makeActive } : p));
+  renderProjectHome();
 }
 
-/* ================= پنل مدیریت (سراسری) ================= */
+/* ================= ویرایش کامل پروژه (اطلاعات + ساختار) ================= */
 
-function renderAdminPanel() {
-  headerSub.textContent = 'پنل مدیریت';
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectList()">بازگشت</button>`;
+function renderProjectEdit() {
+  const p = currentProject;
+  setHeader('projectEdit', 'ویرایش — ' + p.name, 'renderProjectHome()');
   appEl.innerHTML = `
-    <div class="module-grid">
-      <div class="module-tile" onclick="renderChecklistAdmin()"><div class="em">📋</div><div class="lbl">چک‌لیست ساختمان</div></div>
-      <div class="module-tile" onclick="renderContractorsAdmin()"><div class="em">🏗️</div><div class="lbl">پیمانکاران</div></div>
-      <div class="module-tile" style="grid-column:span 2;" onclick="renderUsersAdmin()"><div class="em">👤</div><div class="lbl">کاربران</div></div>
+    <div class="section-title">اطلاعات پروژه</div>
+    <div class="card flat">
+      <label class="field-label">نام پروژه</label>
+      <input id="peName" class="field-input" value="${escapeHtml(p.name)}">
+      <label class="field-label">کد پروژه</label>
+      <input id="peCode" class="field-input" value="${escapeHtml(p.code || '')}">
+      <label class="field-label">توضیحات</label>
+      <input id="peDescInp" class="field-input" value="${escapeHtml(p.description || '')}">
+      <button class="btn-primary" style="width:100%;" onclick="saveProjectInfo()">ذخیره اطلاعات</button>
+      <div id="peInfoMsg" style="font-size:11.5px; color:var(--green); margin-top:6px;"></div>
+    </div>
+
+    <div class="section-title">بلوک‌ها و طبقات</div>
+    <div id="editBlocksHost"></div>
+    <div class="card flat">
+      <label class="field-label">افزودن بلوک جدید</label>
+      <div class="row-2">
+        <input id="newBlockName" class="field-input" placeholder="نام بلوک">
+        <button class="btn-primary" onclick="addBlockToProject()">افزودن</button>
+      </div>
     </div>
   `;
+  drawEditBlocks();
 }
 
-/* ---- مدیریت دسته‌بندی‌های چک‌لیست ---- */
+async function saveProjectInfo() {
+  const name = document.getElementById('peName').value.trim();
+  const code = document.getElementById('peCode').value.trim();
+  const description = document.getElementById('peDescInp').value.trim();
+  if (!name) return;
+  await db.collection('projects').doc(currentProject.id).update({ name, code, description });
+  currentProject = { ...currentProject, name, code, description };
+  myProjects = myProjects.map((p) => (p.id === currentProject.id ? currentProject : p));
+  document.getElementById('peInfoMsg').textContent = 'ذخیره شد.';
+  headerSub.textContent = 'ویرایش — ' + name;
+}
+
+function drawEditBlocks() {
+  const host = document.getElementById('editBlocksHost');
+  host.innerHTML = currentBlocks.map((b) => `
+    <div class="subcard">
+      <div class="subcard-head">
+        <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(b.name)}"
+               onchange="renameBlock('${b.id}', this.value)">
+        <button class="icon-btn" onclick="deleteBlockConfirm('${b.id}')">حذف بلوک</button>
+      </div>
+      ${b.floors.map((f) => `
+        <div class="subcard" style="background:var(--panel);">
+          <div class="subcard-head">
+            <input class="field-input" style="margin-bottom:0;" value="${escapeHtml(f.name)}"
+                   onchange="renameFloor('${f.id}', this.value)">
+            <button class="icon-btn" onclick="deleteFloorConfirm('${f.id}', '${b.id}')">حذف طبقه</button>
+          </div>
+          <div style="font-size:11.5px; color:var(--ink-soft); margin-bottom:6px;">تعداد واحد فعلی: ${f.unitsCount || 0}</div>
+          <div class="row-2">
+            <input id="newUnitName_${f.id}" class="field-input" placeholder="نام واحد جدید">
+            <button class="btn-secondary" onclick="addUnitToFloor('${f.id}','${b.id}')">افزودن واحد</button>
+          </div>
+        </div>`).join('')}
+      <div class="row-2">
+        <input id="newFloorName_${b.id}" class="field-input" placeholder="نام طبقه جدید">
+        <button class="btn-secondary" onclick="addFloorToBlock('${b.id}')">افزودن طبقه</button>
+      </div>
+    </div>`).join('') || '<div class="card flat">بلوکی وجود ندارد.</div>';
+}
+
+async function addBlockToProject() {
+  const nameEl = document.getElementById('newBlockName');
+  const name = nameEl.value.trim();
+  if (!name) return;
+  await db.collection('blocks').add({ projectId: currentProject.id, name, order: currentBlocks.length });
+  nameEl.value = '';
+  await reloadCurrentProjectStructure();
+  drawEditBlocks();
+}
+async function renameBlock(blockId, newName) {
+  if (!newName.trim()) return;
+  await db.collection('blocks').doc(blockId).update({ name: newName.trim() });
+  await reloadCurrentProjectStructure();
+}
+async function deleteBlockConfirm(blockId) {
+  if (!confirm('این بلوک و همه‌ی طبقات/واحدهای آن حذف شوند؟ این کار قابل بازگشت نیست.')) return;
+  const block = currentBlocks.find((b) => b.id === blockId);
+  const batch = db.batch();
+  for (const f of block.floors) {
+    const unitsSnap = await db.collection('units').where('floorId', '==', f.id).get();
+    unitsSnap.docs.forEach((u) => batch.delete(u.ref));
+    batch.delete(db.collection('floors').doc(f.id));
+  }
+  batch.delete(db.collection('blocks').doc(blockId));
+  await batch.commit();
+  await reloadCurrentProjectStructure();
+  drawEditBlocks();
+}
+
+async function addFloorToBlock(blockId) {
+  const nameEl = document.getElementById('newFloorName_' + blockId);
+  const name = nameEl.value.trim();
+  if (!name) return;
+  const block = currentBlocks.find((b) => b.id === blockId);
+  await db.collection('floors').add({
+    blockId, projectId: currentProject.id, name, order: block.floors.length, type: 'residential', unitsCount: 0,
+  });
+  await reloadCurrentProjectStructure();
+  drawEditBlocks();
+}
+async function renameFloor(floorId, newName) {
+  if (!newName.trim()) return;
+  await db.collection('floors').doc(floorId).update({ name: newName.trim() });
+  await reloadCurrentProjectStructure();
+}
+async function deleteFloorConfirm(floorId, blockId) {
+  if (!confirm('این طبقه و واحدهای آن حذف شوند؟')) return;
+  const batch = db.batch();
+  const unitsSnap = await db.collection('units').where('floorId', '==', floorId).get();
+  unitsSnap.docs.forEach((u) => batch.delete(u.ref));
+  batch.delete(db.collection('floors').doc(floorId));
+  await batch.commit();
+  await reloadCurrentProjectStructure();
+  drawEditBlocks();
+}
+
+async function addUnitToFloor(floorId, blockId) {
+  const nameEl = document.getElementById('newUnitName_' + floorId);
+  const name = nameEl.value.trim();
+  if (!name) return;
+  await db.collection('units').add({ floorId, blockId, projectId: currentProject.id, name });
+  const floorRef = db.collection('floors').doc(floorId);
+  const floorDoc = await floorRef.get();
+  await floorRef.update({ unitsCount: (floorDoc.data().unitsCount || 0) + 1 });
+  await reloadCurrentProjectStructure();
+  drawEditBlocks();
+}
+
+/* ================= پنل مدیریت: چک‌لیست ================= */
 
 function renderChecklistAdmin() {
-  headerSub.textContent = 'مدیریت چک‌لیست';
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
+  setHeader('checklistAdmin', 'مدیریت چک‌لیست', 'renderAdminHome()');
   appEl.innerHTML = `
     <div class="section-title">دسته‌بندی‌ها</div>
     <div id="catList" class="card flat">در حال بارگذاری…</div>
@@ -542,11 +665,10 @@ async function addChecklistCategory() {
   renderChecklistAdmin();
 }
 
-/* ---- مدیریت آیتم‌های یک دسته ---- */
-
+let categoryName_global = '';
 function renderChecklistItemsAdmin(categoryId, categoryName) {
-  headerSub.textContent = categoryName;
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderChecklistAdmin()">بازگشت</button>`;
+  categoryName_global = categoryName;
+  setHeader('checklistItemsAdmin', categoryName, 'renderChecklistAdmin()');
   appEl.innerHTML = `
     <div class="section-title">فعالیت‌های «${escapeHtml(categoryName)}»</div>
     <div id="itemList" class="card flat">در حال بارگذاری…</div>
@@ -569,24 +691,17 @@ async function loadChecklistItemsAdmin(categoryId) {
   host.innerHTML = items.length ? items.map((it) => `
     <div class="card-row" style="padding:8px 0;">
       <span>${escapeHtml(it.name)} ${it.weight ? `<span class="chip">${it.weight}%</span>` : ''}</span>
-      <button class="icon-btn" onclick="deleteChecklistItem('${it.id}','${categoryId}','${escapeHtml(categoryName_global)}')">حذف</button>
+      <button class="icon-btn" onclick="deleteChecklistItem('${it.id}','${categoryId}')">حذف</button>
     </div>`).join('') : 'فعالیتی ثبت نشده.';
 }
-
-let categoryName_global = '';
-function addChecklistItem(categoryId) {
-  categoryName_global = document.getElementById('itemList') ? headerSub.textContent : '';
-  return _addChecklistItem(categoryId);
-}
-async function _addChecklistItem(categoryId) {
+async function addChecklistItem(categoryId) {
   const nameEl = document.getElementById('newItemName');
   const weightEl = document.getElementById('newItemWeight');
   const name = nameEl.value.trim();
   if (!name) return;
   const countSnap = await db.collection('checklistItems').where('categoryId', '==', categoryId).get();
   await db.collection('checklistItems').add({
-    categoryId, parentItemId: null, name, order: countSnap.size,
-    weight: parseFloat(weightEl.value) || 0,
+    categoryId, parentItemId: null, name, order: countSnap.size, weight: parseFloat(weightEl.value) || 0,
   });
   nameEl.value = ''; weightEl.value = '';
   loadChecklistItemsAdmin(categoryId);
@@ -597,11 +712,10 @@ async function deleteChecklistItem(itemId, categoryId) {
   loadChecklistItemsAdmin(categoryId);
 }
 
-/* ---- مدیریت پیمانکاران ---- */
+/* ================= پنل مدیریت: پیمانکاران ================= */
 
 function renderContractorsAdmin() {
-  headerSub.textContent = 'پیمانکاران';
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
+  setHeader('contractorsAdmin', 'پیمانکاران', 'renderAdminHome()');
   appEl.innerHTML = `
     <div class="section-title">لیست پیمانکاران</div>
     <div id="contractorList" class="card flat">در حال بارگذاری…</div>
@@ -627,15 +741,12 @@ async function loadContractorsAdmin() {
       <button class="icon-btn" onclick="toggleContractorActive('${c.id}', ${c.active === false})">${c.active === false ? 'فعال‌سازی' : 'غیرفعال'}</button>
     </div>`).join('') : 'پیمانکاری ثبت نشده.';
 }
-
 async function addContractor() {
   const nameEl = document.getElementById('newContractorName');
   const typeEl = document.getElementById('newContractorType');
   const name = nameEl.value.trim();
   if (!name) return;
-  await db.collection('contractors').add({
-    name, code: '', activityType: typeEl.value.trim(), description: '', active: true,
-  });
+  await db.collection('contractors').add({ name, code: '', activityType: typeEl.value.trim(), description: '', active: true });
   nameEl.value = ''; typeEl.value = '';
   loadContractorsAdmin();
 }
@@ -644,38 +755,184 @@ async function toggleContractorActive(id, makeActive) {
   loadContractorsAdmin();
 }
 
+/* ================= پنل مدیریت: کاربران ================= */
+
+let usersAdminCache = [];
+let usersAdminProjectsCache = [];
+let usersAdminCategoriesCache = [];
+
+async function renderUsersAdmin() {
+  setHeader('usersAdmin', 'کاربران', 'renderAdminHome()');
+  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
+
+  const [usersSnap, projSnap, catSnap] = await Promise.all([
+    db.collection('users').get(),
+    db.collection('projects').get(),
+    db.collection('checklistCategories').orderBy('order').get(),
+  ]);
+  usersAdminCache = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => (a.username || '').localeCompare(b.username || '', 'fa'));
+  usersAdminProjectsCache = projSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  usersAdminCategoriesCache = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+  drawUsersAdmin();
+}
+
+function drawUsersAdmin() {
+  currentScreen = 'usersAdmin';
+  appEl.innerHTML = `
+    <div class="section-title">لیست کاربران</div>
+    ${usersAdminCache.map((u) => `
+      <div class="card">
+        <div class="card-row" onclick="renderUserForm('${u.id}')">
+          <div>
+            <div class="card-title">${escapeHtml(u.username)}</div>
+            <div class="card-sub">${u.roleId === 'admin' ? 'مدیر' : 'کاربر عادی'} — ${(u.assignedProjectIds || []).length} پروژه</div>
+          </div>
+          ${u.active === false ? '<span class="chip off">غیرفعال</span>' : '<span class="arrow">‹</span>'}
+        </div>
+      </div>`).join('') || '<div class="card flat">کاربری ثبت نشده.</div>'}
+    <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="renderUserForm(null)">+ کاربر جدید</button>
+  `;
+}
+
+function renderUserForm(userId) {
+  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
+  setHeader('userForm', editing ? 'ویرایش کاربر' : 'کاربر جدید', 'drawUsersAdmin()');
+
+  const assignedProjectIds = editing ? (editing.assignedProjectIds || []) : [];
+  const assignedCatIds = editing ? (editing.assignedChecklistCategoryIds || []) : [];
+
+  appEl.innerHTML = `
+    <div class="section-title">${editing ? 'ویرایش کاربر' : 'ساخت کاربر جدید'}</div>
+    <div class="card flat">
+      <label class="field-label">نام کاربری</label>
+      <input id="ufUsername" class="field-input" value="${editing ? escapeHtml(editing.username) : ''}" ${editing ? 'disabled' : ''}>
+      ${!editing ? `
+        <label class="field-label">رمز عبور</label>
+        <input id="ufPassword" type="password" class="field-input" placeholder="حداقل ۶ کاراکتر">
+      ` : ''}
+      <label class="field-label">نام نمایشی</label>
+      <input id="ufDisplayName" class="field-input" value="${editing ? escapeHtml(editing.displayName || '') : ''}">
+      <label class="field-label">نقش</label>
+      <select id="ufRole" class="field-input">
+        <option value="user" ${editing && editing.roleId !== 'admin' ? 'selected' : ''}>کاربر عادی</option>
+        <option value="admin" ${editing && editing.roleId === 'admin' ? 'selected' : ''}>مدیر</option>
+      </select>
+      <label class="field-label">
+        <input type="checkbox" id="ufActive" ${!editing || editing.active !== false ? 'checked' : ''}> فعال باشد
+      </label>
+    </div>
+
+    <div class="section-title">پروژه‌های قابل‌دسترس</div>
+    <div class="card flat">
+      ${usersAdminProjectsCache.length ? usersAdminProjectsCache.map((p) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
+          <input type="checkbox" class="ufProjectChk" value="${p.id}" ${assignedProjectIds.includes(p.id) ? 'checked' : ''}>
+          ${escapeHtml(p.name)}
+        </label>`).join('') : 'پروژه‌ای وجود ندارد.'}
+    </div>
+
+    <div class="section-title">دسته‌بندی‌های چک‌لیست قابل‌دسترس</div>
+    <div class="card flat">
+      ${usersAdminCategoriesCache.length ? usersAdminCategoriesCache.map((c) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
+          <input type="checkbox" class="ufCatChk" value="${c.id}" ${assignedCatIds.includes(c.id) ? 'checked' : ''}>
+          ${escapeHtml(c.name)}
+        </label>`).join('') : 'دسته‌بندی‌ای وجود ندارد.'}
+    </div>
+
+    <div id="ufError" class="auth-error" style="margin-bottom:10px;"></div>
+    <button id="ufSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitUserForm('${userId || ''}')">
+      ${editing ? 'ذخیره تغییرات' : 'ساخت کاربر'}
+    </button>
+  `;
+}
+
+async function submitUserForm(userId) {
+  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
+  const displayName = document.getElementById('ufDisplayName').value.trim();
+  const roleId = document.getElementById('ufRole').value;
+  const active = document.getElementById('ufActive').checked;
+  const assignedProjectIds = Array.from(document.querySelectorAll('.ufProjectChk:checked')).map((el) => el.value);
+  const assignedChecklistCategoryIds = Array.from(document.querySelectorAll('.ufCatChk:checked')).map((el) => el.value);
+  const errEl = document.getElementById('ufError');
+  const btn = document.getElementById('ufSubmitBtn');
+  errEl.textContent = '';
+
+  if (editing) {
+    btn.disabled = true; btn.textContent = 'در حال ذخیره…';
+    try {
+      await db.collection('users').doc(editing.id).update({ displayName, roleId, active, assignedProjectIds, assignedChecklistCategoryIds });
+      renderUsersAdmin();
+    } catch (err) {
+      console.error(err);
+      errEl.textContent = 'خطا در ذخیره: ' + (err.message || err);
+      btn.disabled = false; btn.textContent = 'ذخیره تغییرات';
+    }
+    return;
+  }
+
+  const username = document.getElementById('ufUsername').value.trim();
+  const password = document.getElementById('ufPassword').value;
+  if (!username || !password || password.length < 6) {
+    errEl.textContent = 'نام کاربری و رمز عبور (حداقل ۶ کاراکتر) را وارد کنید.';
+    return;
+  }
+  btn.disabled = true; btn.textContent = 'در حال ساخت…';
+  const existing = await db.collection('usernames').doc(username).get();
+  if (existing.exists) {
+    errEl.textContent = 'این نام کاربری قبلاً استفاده شده.';
+    btn.disabled = false; btn.textContent = 'ساخت کاربر';
+    return;
+  }
+
+  const email = username + '@raspina.local';
+  const secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
+  try {
+    const secondaryAuth = secondaryApp.auth();
+    const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
+    const newUid = cred.user.uid;
+    await secondaryAuth.signOut();
+
+    await db.collection('usernames').doc(username).set({ email });
+    await db.collection('users').doc(newUid).set({ username, displayName, roleId, active, assignedProjectIds, assignedChecklistCategoryIds });
+
+    await secondaryApp.delete();
+    renderUsersAdmin();
+  } catch (err) {
+    console.error(err);
+    errEl.textContent = 'خطا در ساخت کاربر: ' + (err.code === 'auth/email-already-in-use' ? 'این نام کاربری قبلاً استفاده شده.' : (err.message || err));
+    btn.disabled = false; btn.textContent = 'ساخت کاربر';
+    try { await secondaryApp.delete(); } catch (e) {}
+  }
+}
+
 /* ================= ماژول چک‌لیست/ثبت پیشرفت (داخل پروژه) ================= */
 
 async function openChecklistModule() {
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
   const snap = await db.collection('checklistCategories').orderBy('order').get();
   let cats = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
   if (!isAdminUser()) {
     const allowed = myProfile.assignedChecklistCategoryIds || [];
     cats = cats.filter((c) => allowed.includes(c.id));
   }
 
   if (cats.length === 0) {
-    appEl.innerHTML = `<div class="card flat" style="text-align:center;">هیچ چک‌لیستی برای شما تعریف نشده است.</div>
-      <button class="btn-secondary" style="margin-top:10px;" onclick="renderProjectHome()">بازگشت</button>`;
+    setHeader('checklistPick', 'چک‌لیست ساختمان', 'renderProjectHome()');
+    appEl.innerHTML = `<div class="card flat" style="text-align:center;">هیچ چک‌لیستی برای شما تعریف نشده است.</div>`;
     return;
   }
   if (cats.length === 1) { openProgressEntry(cats[0]); return; }
 
-  appEl.innerHTML = `
-    <div class="section-title">انتخاب دسته‌بندی</div>
-    ${cats.map((c) => `
-      <div class="card"><div class="card-row" onclick='openProgressEntry(${JSON.stringify(c)})'>
-        <span class="card-title">${escapeHtml(c.name)}</span><span class="arrow">‹</span>
-      </div></div>`).join('')}
-    <button class="btn-secondary" onclick="renderProjectHome()">بازگشت</button>
-  `;
+  setHeader('checklistPick', 'انتخاب دسته‌بندی', 'renderProjectHome()');
+  appEl.innerHTML = cats.map((c) => `
+    <div class="card"><div class="card-row" onclick='openProgressEntry(${JSON.stringify(c)})'>
+      <span class="card-title">${escapeHtml(c.name)}</span><span class="arrow">‹</span>
+    </div></div>`).join('');
 }
 
 async function openProgressEntry(category) {
-  headerSub.textContent = 'ثبت پیشرفت — ' + category.name;
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
+  setHeader('progressEntry', 'ثبت پیشرفت — ' + category.name, 'renderProjectHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
 
   const itemsSnap = await db.collection('checklistItems').where('categoryId', '==', category.id).get();
@@ -743,10 +1000,7 @@ async function submitProgress(categoryId) {
   const errEl = document.getElementById('peError');
   const btn = document.getElementById('peSubmitBtn');
 
-  if (!blockId || !floorId || !itemId) {
-    errEl.textContent = 'بلوک، طبقه و فعالیت را انتخاب کنید.';
-    return;
-  }
+  if (!blockId || !floorId || !itemId) { errEl.textContent = 'بلوک، طبقه و فعالیت را انتخاب کنید.'; return; }
   errEl.textContent = '';
   btn.disabled = true; btn.textContent = 'در حال ثبت…';
 
@@ -780,7 +1034,6 @@ async function loadTodayProgress(categoryId) {
   const records = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
     .filter((r) => r.createdAt && r.createdAt.toDate && r.createdAt.toDate() >= startOfDay)
     .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
-
   host.innerHTML = records.length ? records.map((r) => `
     <div class="card-row" style="padding:6px 0; cursor:default;">
       <span style="font-size:12.5px;">${r.progressPercent}٪ ${r.description ? '— ' + escapeHtml(r.description) : ''}</span>
@@ -791,8 +1044,7 @@ async function loadTodayProgress(categoryId) {
 /* ================= ماژول نیروی کاری (داخل پروژه) ================= */
 
 async function openWorkforceModule() {
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
-  headerSub.textContent = 'نیروی کاری — ' + currentProject.name;
+  setHeader('workforce', 'نیروی کاری — ' + currentProject.name, 'renderProjectHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
 
   const snap = await db.collection('contractors').orderBy('name').get();
@@ -843,10 +1095,7 @@ async function submitWorkforce() {
   const errEl = document.getElementById('wfError');
   const btn = document.getElementById('wfSubmitBtn');
 
-  if (!contractorId || !activity) {
-    errEl.textContent = 'پیمانکار و شرح فعالیت را وارد کنید.';
-    return;
-  }
+  if (!contractorId || !activity) { errEl.textContent = 'پیمانکار و شرح فعالیت را وارد کنید.'; return; }
   errEl.textContent = '';
   btn.disabled = true; btn.textContent = 'در حال ثبت…';
 
@@ -879,7 +1128,6 @@ async function loadTodayWorkforce() {
   const records = snap.docs.map((d) => ({ id: d.id, ...d.data() }))
     .filter((r) => r.createdAt && r.createdAt.toDate && r.createdAt.toDate() >= startOfDay)
     .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
-
   host.innerHTML = records.length ? records.map((r) => `
     <div class="card-row" style="padding:6px 0; cursor:default;">
       <span style="font-size:12.5px;">${escapeHtml(r.contractorName)} — ${escapeHtml(r.activityDescription)} (${r.totalCount} نفر)</span>
@@ -887,41 +1135,28 @@ async function loadTodayWorkforce() {
     </div>`).join('') : 'هنوز ثبتی امروز نداشتید.';
 }
 
-/* ================= داشبورد و گزارش‌ها (فاز ۵) ================= */
+/* ================= داشبورد و گزارش‌ها ================= */
 
 function weightedAverage(valueByKey, weightByKey) {
   const keys = Object.keys(valueByKey);
   if (keys.length === 0) return 0;
   let totalWeight = 0;
   keys.forEach((k) => { totalWeight += (weightByKey[k] || 0); });
-  if (totalWeight <= 0) {
-    // بدون وزن مشخص: میانگین ساده
-    const sum = keys.reduce((s, k) => s + valueByKey[k], 0);
-    return sum / keys.length;
-  }
+  if (totalWeight <= 0) { const sum = keys.reduce((s, k) => s + valueByKey[k], 0); return sum / keys.length; }
   let sum = 0;
   keys.forEach((k) => { sum += valueByKey[k] * (weightByKey[k] || 0); });
   return sum / totalWeight;
 }
-
 function averageByKey(records, keyFn) {
   const groups = {};
-  records.forEach((r) => {
-    const k = keyFn(r);
-    if (!k) return;
-    (groups[k] = groups[k] || []).push(r.progressPercent);
-  });
+  records.forEach((r) => { const k = keyFn(r); if (!k) return; (groups[k] = groups[k] || []).push(r.progressPercent); });
   const result = {};
-  Object.keys(groups).forEach((k) => {
-    const arr = groups[k];
-    result[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
-  });
+  Object.keys(groups).forEach((k) => { const arr = groups[k]; result[k] = arr.reduce((a, b) => a + b, 0) / arr.length; });
   return result;
 }
 
 async function openReportsModule() {
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderProjectHome()">بازگشت</button>`;
-  headerSub.textContent = 'داشبورد و گزارش — ' + currentProject.name;
+  setHeader('reports', 'داشبورد و گزارش — ' + currentProject.name, 'renderProjectHome()');
   appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال محاسبه…</span></span></div>`;
 
   const [progSnap, catSnap, itemSnap, wfSnap] = await Promise.all([
@@ -935,7 +1170,6 @@ async function openReportsModule() {
     .filter((r) => r.createdAt && r.createdAt.toMillis)
     .sort((a, b) => b.createdAt.toMillis() - a.createdAt.toMillis());
 
-  // آخرین رکورد به‌ازای هر (فعالیت + بلوک + طبقه + واحد) — چون allRecords نزولی است.
   const latestByKey = {};
   allRecords.forEach((r) => {
     const key = `${r.checklistItemId}_${r.blockId}_${r.floorId}_${r.unitId || ''}`;
@@ -949,14 +1183,9 @@ async function openReportsModule() {
   allItems.forEach((it) => { weightByItem[it.id] = it.weight || 0; });
 
   const percentsByItem = {};
-  latestRecords.forEach((r) => {
-    (percentsByItem[r.checklistItemId] = percentsByItem[r.checklistItemId] || []).push(r.progressPercent);
-  });
+  latestRecords.forEach((r) => { (percentsByItem[r.checklistItemId] = percentsByItem[r.checklistItemId] || []).push(r.progressPercent); });
   const avgPercentByItem = {};
-  Object.keys(percentsByItem).forEach((k) => {
-    const arr = percentsByItem[k];
-    avgPercentByItem[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
-  });
+  Object.keys(percentsByItem).forEach((k) => { const arr = percentsByItem[k]; avgPercentByItem[k] = arr.reduce((a, b) => a + b, 0) / arr.length; });
 
   const overallProgress = weightedAverage(avgPercentByItem, weightByItem);
 
@@ -968,19 +1197,12 @@ async function openReportsModule() {
   });
 
   const progressByBlockMap = averageByKey(latestRecords, (r) => r.blockId);
-  const progressByBlock = currentBlocks.map((b) => ({
-    name: b.name, percent: progressByBlockMap[b.id] || 0,
-  }));
+  const progressByBlock = currentBlocks.map((b) => ({ name: b.name, percent: progressByBlockMap[b.id] || 0 }));
 
-  // نیروی کاری: مجموع نفرات به تفکیک پیمانکار
   const wfRecords = wfSnap.docs.map((d) => d.data());
   const totalsByContractor = {};
-  wfRecords.forEach((r) => {
-    totalsByContractor[r.contractorName] = (totalsByContractor[r.contractorName] || 0) + (r.totalCount || 0);
-  });
-  const contractorRows = Object.keys(totalsByContractor)
-    .map((name) => ({ name, total: totalsByContractor[name] }))
-    .sort((a, b) => b.total - a.total);
+  wfRecords.forEach((r) => { totalsByContractor[r.contractorName] = (totalsByContractor[r.contractorName] || 0) + (r.totalCount || 0); });
+  const contractorRows = Object.keys(totalsByContractor).map((name) => ({ name, total: totalsByContractor[name] })).sort((a, b) => b.total - a.total);
   const grandTotalWorkforce = contractorRows.reduce((s, c) => s + c.total, 0);
 
   function bar(label, percent) {
@@ -1009,17 +1231,10 @@ async function openReportsModule() {
         ${Math.round(overallProgress)}٪
       </div>
     </div>
-
     <div class="section-title">پیشرفت به تفکیک دسته‌بندی</div>
-    <div class="card flat">
-      ${progressByCategory.length ? progressByCategory.map((c) => bar(c.name, c.percent)).join('') : 'دسته‌بندی‌ای ثبت نشده.'}
-    </div>
-
+    <div class="card flat">${progressByCategory.length ? progressByCategory.map((c) => bar(c.name, c.percent)).join('') : 'دسته‌بندی‌ای ثبت نشده.'}</div>
     <div class="section-title">پیشرفت به تفکیک بلوک</div>
-    <div class="card flat">
-      ${progressByBlock.length ? progressByBlock.map((b) => bar(b.name, b.percent)).join('') : 'بلوکی ثبت نشده.'}
-    </div>
-
+    <div class="card flat">${progressByBlock.length ? progressByBlock.map((b) => bar(b.name, b.percent)).join('') : 'بلوکی ثبت نشده.'}</div>
     <div class="section-title">نیروی کاری (مجموع کل)</div>
     <div class="summary-strip">
       <div class="summary-item"><div class="summary-num">${grandTotalWorkforce}</div><div class="summary-label">نفر × روز</div></div>
@@ -1036,176 +1251,10 @@ async function openReportsModule() {
   `;
 }
 
-/* ================= مدیریت کاربران (فاز ۶) ================= */
-
-let usersAdminCache = [];
-let usersAdminProjectsCache = [];
-let usersAdminCategoriesCache = [];
-
-async function renderUsersAdmin() {
-  headerSub.textContent = 'کاربران';
-  headerRight.innerHTML = `<button class="back-btn" onclick="renderAdminPanel()">بازگشت</button>`;
-  appEl.innerHTML = `<div class="center-screen"><span class="sync-note"><span class="dot"></span><span>در حال بارگذاری…</span></span></div>`;
-
-  const [usersSnap, projSnap, catSnap] = await Promise.all([
-    db.collection('users').get(),
-    db.collection('projects').get(),
-    db.collection('checklistCategories').orderBy('order').get(),
-  ]);
-  usersAdminCache = usersSnap.docs.map((d) => ({ id: d.id, ...d.data() }))
-    .sort((a, b) => (a.username || '').localeCompare(b.username || '', 'fa'));
-  usersAdminProjectsCache = projSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-  usersAdminCategoriesCache = catSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-
-  drawUsersAdmin();
-}
-
-function drawUsersAdmin() {
-  appEl.innerHTML = `
-    <div class="section-title">لیست کاربران</div>
-    ${usersAdminCache.map((u) => `
-      <div class="card">
-        <div class="card-row" onclick="renderUserForm('${u.id}')">
-          <div>
-            <div class="card-title">${escapeHtml(u.username)}</div>
-            <div class="card-sub">${u.roleId === 'admin' ? 'مدیر' : 'کاربر عادی'} — ${(u.assignedProjectIds || []).length} پروژه</div>
-          </div>
-          ${u.active === false ? '<span class="chip off">غیرفعال</span>' : '<span class="arrow">‹</span>'}
-        </div>
-      </div>`).join('') || '<div class="card flat">کاربری ثبت نشده.</div>'}
-    <button class="btn-primary" style="width:100%; margin-top:10px;" onclick="renderUserForm(null)">+ کاربر جدید</button>
-  `;
-}
-
-function renderUserForm(userId) {
-  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
-  headerRight.innerHTML = `<button class="back-btn" onclick="drawUsersAdmin()">بازگشت</button>`;
-  headerSub.textContent = editing ? 'ویرایش کاربر' : 'کاربر جدید';
-
-  const assignedProjectIds = editing ? (editing.assignedProjectIds || []) : [];
-  const assignedCatIds = editing ? (editing.assignedChecklistCategoryIds || []) : [];
-
-  appEl.innerHTML = `
-    <div class="section-title">${editing ? 'ویرایش کاربر' : 'ساخت کاربر جدید'}</div>
-    <div class="card flat">
-      <label class="field-label">نام کاربری</label>
-      <input id="ufUsername" class="field-input" value="${editing ? escapeHtml(editing.username) : ''}" ${editing ? 'disabled' : ''}>
-      ${!editing ? `
-        <label class="field-label">رمز عبور</label>
-        <input id="ufPassword" type="password" class="field-input" placeholder="حداقل ۶ کاراکتر">
-      ` : ''}
-      <label class="field-label">نام نمایشی</label>
-      <input id="ufDisplayName" class="field-input" value="${editing ? escapeHtml(editing.displayName || '') : ''}">
-      <label class="field-label">نقش</label>
-      <select id="ufRole" class="field-input">
-        <option value="user" ${editing && editing.roleId !== 'admin' ? 'selected' : ''}>کاربر عادی</option>
-        <option value="admin" ${editing && editing.roleId === 'admin' ? 'selected' : ''}>مدیر</option>
-      </select>
-      <label class="field-label">
-        <input type="checkbox" id="ufActive" ${!editing || editing.active !== false ? 'checked' : ''}> فعال باشد
-      </label>
-    </div>
-
-    <div class="section-title">پروژه‌های قابل‌دسترس</div>
-    <div class="card flat">
-      ${usersAdminProjectsCache.length ? usersAdminProjectsCache.map((p) => `
-        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
-          <input type="checkbox" class="ufProjectChk" value="${p.id}" ${assignedProjectIds.includes(p.id) ? 'checked' : ''}>
-          ${escapeHtml(p.name)}
-        </label>`).join('') : 'پروژه‌ای وجود ندارد.'}
-    </div>
-
-    <div class="section-title">دسته‌بندی‌های چک‌لیست قابل‌دسترس</div>
-    <div class="card flat">
-      ${usersAdminCategoriesCache.length ? usersAdminCategoriesCache.map((c) => `
-        <label style="display:flex; align-items:center; gap:8px; padding:6px 0; font-size:13px;">
-          <input type="checkbox" class="ufCatChk" value="${c.id}" ${assignedCatIds.includes(c.id) ? 'checked' : ''}>
-          ${escapeHtml(c.name)}
-        </label>`).join('') : 'دسته‌بندی‌ای وجود ندارد.'}
-    </div>
-
-    <div id="ufError" class="auth-error" style="margin-bottom:10px;"></div>
-    <button id="ufSubmitBtn" class="btn-primary" style="width:100%;" onclick="submitUserForm('${userId || ''}')">
-      ${editing ? 'ذخیره تغییرات' : 'ساخت کاربر'}
-    </button>
-  `;
-}
-
-async function submitUserForm(userId) {
-  const editing = userId ? usersAdminCache.find((u) => u.id === userId) : null;
-  const displayName = document.getElementById('ufDisplayName').value.trim();
-  const roleId = document.getElementById('ufRole').value;
-  const active = document.getElementById('ufActive').checked;
-  const assignedProjectIds = Array.from(document.querySelectorAll('.ufProjectChk:checked')).map((el) => el.value);
-  const assignedChecklistCategoryIds = Array.from(document.querySelectorAll('.ufCatChk:checked')).map((el) => el.value);
-  const errEl = document.getElementById('ufError');
-  const btn = document.getElementById('ufSubmitBtn');
-  errEl.textContent = '';
-
-  if (editing) {
-    btn.disabled = true; btn.textContent = 'در حال ذخیره…';
-    try {
-      await db.collection('users').doc(editing.id).update({
-        displayName, roleId, active, assignedProjectIds, assignedChecklistCategoryIds,
-      });
-      renderUsersAdmin();
-    } catch (err) {
-      console.error(err);
-      errEl.textContent = 'خطا در ذخیره: ' + (err.message || err);
-      btn.disabled = false; btn.textContent = 'ذخیره تغییرات';
-    }
-    return;
-  }
-
-  const username = document.getElementById('ufUsername').value.trim();
-  const password = document.getElementById('ufPassword').value;
-  if (!username || !password || password.length < 6) {
-    errEl.textContent = 'نام کاربری و رمز عبور (حداقل ۶ کاراکتر) را وارد کنید.';
-    return;
-  }
-
-  btn.disabled = true; btn.textContent = 'در حال ساخت…';
-  const existing = await db.collection('usernames').doc(username).get();
-  if (existing.exists) {
-    errEl.textContent = 'این نام کاربری قبلاً استفاده شده.';
-    btn.disabled = false; btn.textContent = 'ساخت کاربر';
-    return;
-  }
-
-  const email = username + '@raspina.local';
-  // یک نمونه‌ی موقت و جدا از Firebase می‌سازیم تا با ساخت کاربر جدید،
-  // نشست ورود مدیر (شما) قطع نشود.
-  const secondaryApp = firebase.initializeApp(firebaseConfig, 'Secondary-' + Date.now());
-  try {
-    const secondaryAuth = secondaryApp.auth();
-    const cred = await secondaryAuth.createUserWithEmailAndPassword(email, password);
-    const newUid = cred.user.uid;
-    await secondaryAuth.signOut();
-
-    await db.collection('usernames').doc(username).set({ email });
-    await db.collection('users').doc(newUid).set({
-      username, displayName, roleId, active,
-      assignedProjectIds, assignedChecklistCategoryIds,
-    });
-
-    await secondaryApp.delete();
-    renderUsersAdmin();
-  } catch (err) {
-    console.error(err);
-    errEl.textContent = 'خطا در ساخت کاربر: ' + (err.code === 'auth/email-already-in-use'
-      ? 'این نام کاربری قبلاً استفاده شده.' : (err.message || err));
-    btn.disabled = false; btn.textContent = 'ساخت کاربر';
-    try { await secondaryApp.delete(); } catch (e) {}
-  }
-}
-
-/* ================= خروجی اکسل / PDF (فاز ۷) ================= */
-
 function exportReportExcel() {
   const d = window.__reportData;
   if (!d) return;
   const wb = XLSX.utils.book_new();
-
   const summarySheet = XLSX.utils.aoa_to_sheet([
     ['پروژه', currentProject.name],
     ['پیشرفت کلی (٪)', Math.round(d.overallProgress)],
@@ -1213,39 +1262,24 @@ function exportReportExcel() {
     ['تعداد ثبت نیروی کاری', d.wfRecordsCount],
   ]);
   XLSX.utils.book_append_sheet(wb, summarySheet, 'خلاصه');
-
-  const catSheet = XLSX.utils.aoa_to_sheet([
-    ['دسته‌بندی', 'درصد پیشرفت'],
-    ...d.progressByCategory.map((c) => [c.name, Math.round(c.percent)]),
-  ]);
+  const catSheet = XLSX.utils.aoa_to_sheet([['دسته‌بندی', 'درصد پیشرفت'], ...d.progressByCategory.map((c) => [c.name, Math.round(c.percent)])]);
   XLSX.utils.book_append_sheet(wb, catSheet, 'دسته‌بندی‌ها');
-
-  const blockSheet = XLSX.utils.aoa_to_sheet([
-    ['بلوک', 'درصد پیشرفت'],
-    ...d.progressByBlock.map((b) => [b.name, Math.round(b.percent)]),
-  ]);
+  const blockSheet = XLSX.utils.aoa_to_sheet([['بلوک', 'درصد پیشرفت'], ...d.progressByBlock.map((b) => [b.name, Math.round(b.percent)])]);
   XLSX.utils.book_append_sheet(wb, blockSheet, 'بلوک‌ها');
-
-  const wfSheet = XLSX.utils.aoa_to_sheet([
-    ['پیمانکار', 'مجموع نفر × روز'],
-    ...d.contractorRows.map((c) => [c.name, c.total]),
-  ]);
+  const wfSheet = XLSX.utils.aoa_to_sheet([['پیمانکار', 'مجموع نفر × روز'], ...d.contractorRows.map((c) => [c.name, c.total])]);
   XLSX.utils.book_append_sheet(wb, wfSheet, 'نیروی کاری');
-
   XLSX.writeFile(wb, `گزارش-${currentProject.name}.xlsx`);
 }
 
 function exportReportPdf() {
   const d = window.__reportData;
   if (!d) return;
-
   const rows = (title, arr, key) => `
     <h3>${title}</h3>
     <table>
       <tr><th>${key === 'contractor' ? 'پیمانکار' : 'عنوان'}</th><th>${key === 'contractor' ? 'مجموع نفر × روز' : 'درصد پیشرفت'}</th></tr>
       ${arr.map((x) => `<tr><td>${escapeHtml(x.name)}</td><td>${key === 'contractor' ? x.total : Math.round(x.percent) + '٪'}</td></tr>`).join('')}
     </table>`;
-
   const html = `
     <!DOCTYPE html><html lang="fa" dir="rtl"><head><meta charset="UTF-8">
     <title>گزارش ${escapeHtml(currentProject.name)}</title>
@@ -1267,7 +1301,6 @@ function exportReportPdf() {
       ${rows('نیروی کاری', d.contractorRows, 'contractor')}
       <script>window.onload = () => window.print();</script>
     </body></html>`;
-
   const w = window.open('', '_blank');
   w.document.write(html);
   w.document.close();
@@ -1284,10 +1317,7 @@ auth.onAuthStateChanged(async (user) => {
 
   try {
     const doc = await db.collection('users').doc(user.uid).get();
-    if (!doc.exists) {
-      myProfile = { username: '', displayName: '', roleId: '', active: false };
-      renderBlocked(); hideSplash(); return;
-    }
+    if (!doc.exists) { myProfile = { username: '', displayName: '', roleId: '', active: false }; renderBlocked(); hideSplash(); return; }
     myProfile = doc.data();
     if (myProfile.active !== true) renderBlocked();
     else startProjectsListener();
@@ -1311,11 +1341,7 @@ window.addEventListener('beforeinstallprompt', (e) => {
   deferredInstallPrompt = e;
   showInstallButton();
 });
-
-window.addEventListener('appinstalled', () => {
-  deferredInstallPrompt = null;
-  hideInstallButton();
-});
+window.addEventListener('appinstalled', () => { deferredInstallPrompt = null; hideInstallButton(); });
 
 function showInstallButton() {
   if (installBtnEl) return;
@@ -1333,34 +1359,22 @@ function showInstallButton() {
   };
   document.body.appendChild(installBtnEl);
 }
-function hideInstallButton() {
-  if (installBtnEl) { installBtnEl.remove(); installBtnEl = null; }
-}
+function hideInstallButton() { if (installBtnEl) { installBtnEl.remove(); installBtnEl = null; } }
 
-function isIos() {
-  return /iphone|ipad|ipod/i.test(navigator.userAgent);
-}
-function isInStandaloneMode() {
-  return window.navigator.standalone === true ||
-    window.matchMedia('(display-mode: standalone)').matches;
-}
+function isIos() { return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+function isInStandaloneMode() { return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches; }
 if (isIos() && !isInStandaloneMode()) {
   window.addEventListener('load', () => {
     const banner = document.createElement('div');
     banner.style.cssText = 'position:fixed; left:14px; right:14px; bottom:14px; background:var(--panel); border:1px solid var(--gold); border-radius:14px; padding:12px 14px; font-size:12px; color:var(--ink); z-index:30; display:flex; align-items:center; justify-content:space-between; gap:10px;';
-    banner.innerHTML = `
-      <span>برای نصب: دکمه Share را بزنید و «Add to Home Screen» را انتخاب کنید.</span>
-      <button style="background:none;border:none;color:var(--ink-faint);font-size:16px;cursor:pointer;" onclick="this.parentElement.remove()">✕</button>
-    `;
+    banner.innerHTML = `<span>برای نصب: دکمه Share را بزنید و «Add to Home Screen» را انتخاب کنید.</span>
+      <button style="background:none;border:none;color:var(--ink-faint);font-size:16px;cursor:pointer;" onclick="this.parentElement.remove()">✕</button>`;
     document.body.appendChild(banner);
   });
 }
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('./service-worker.js').catch((err) => {
-      console.error('Service worker registration failed:', err);
-    });
+    navigator.serviceWorker.register('./service-worker.js').catch((err) => console.error('SW register failed:', err));
   });
 }
-
