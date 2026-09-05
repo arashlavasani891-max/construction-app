@@ -44,12 +44,20 @@ service cloud.firestore {
     match /usernames/{username} {
       allow get: if true;
       allow list: if false;
-      allow write: if isAdmin();
+      // کاربر تازه ثبت‌نام‌کرده فقط می‌تواند نگاشت نام‌کاربری خودش را (با ایمیل خودش) بسازد.
+      allow create: if isSignedIn()
+        && !exists(/databases/$(database)/documents/usernames/$(username))
+        && request.resource.data.email == request.auth.token.email;
+      allow update, delete: if isAdmin();
     }
 
     match /users/{userId} {
       allow read: if isSignedIn() && (request.auth.uid == userId || isAdmin());
-      allow write: if isAdmin();
+      // ثبت‌نام خودکار: کاربر فقط می‌تواند سند خودش را در حالت غیرفعال و نقش عادی بسازد.
+      allow create: if isSignedIn() && request.auth.uid == userId
+        && request.resource.data.active == false
+        && request.resource.data.roleId == 'user';
+      allow update, delete: if isAdmin();
     }
 
     match /projects/{projectId} {

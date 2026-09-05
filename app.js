@@ -49,12 +49,70 @@ function renderLogin(errorMsg) {
       <input id="loginPassword" class="auth-input" type="password" placeholder="رمز عبور" autocomplete="current-password">
       ${errorMsg ? `<div class="auth-error">${escapeHtml(errorMsg)}</div>` : ''}
       <button id="loginBtn" class="auth-btn">ورود</button>
+      <button class="btn-danger" style="margin-top:14px;" onclick="renderSignup()">حساب ندارید؟ ثبت‌نام کنید</button>
     </div>
   `;
   document.getElementById('loginBtn').addEventListener('click', doLogin);
   document.getElementById('loginPassword').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doLogin();
   });
+}
+
+/* ---------- ثبت‌نام خودکار (نیاز به تایید مدیر) ---------- */
+
+function renderSignup(errorMsg) {
+  headerRight.innerHTML = '';
+  headerSub.textContent = 'راسپینا';
+  appEl.innerHTML = `
+    <div class="center-screen">
+      <img src="./icon-192.png" alt="راسپینا">
+      <h2>ثبت‌نام</h2>
+      <p>بعد از ثبت‌نام، حساب شما تا زمان تایید مدیر سیستم غیرفعال خواهد بود.</p>
+      <input id="suUsername" class="auth-input" placeholder="نام کاربری">
+      <input id="suDisplayName" class="auth-input" placeholder="نام و نام خانوادگی">
+      <input id="suPassword" class="auth-input" type="password" placeholder="رمز عبور (حداقل ۶ کاراکتر)">
+      <input id="suPassword2" class="auth-input" type="password" placeholder="تکرار رمز عبور">
+      ${errorMsg ? `<div class="auth-error">${escapeHtml(errorMsg)}</div>` : ''}
+      <button id="signupBtn" class="auth-btn">ثبت‌نام</button>
+      <button class="btn-danger" style="margin-top:14px;" onclick="renderLogin()">بازگشت به ورود</button>
+    </div>
+  `;
+  document.getElementById('signupBtn').addEventListener('click', doSignup);
+}
+
+async function doSignup() {
+  const username = document.getElementById('suUsername').value.trim();
+  const displayName = document.getElementById('suDisplayName').value.trim();
+  const password = document.getElementById('suPassword').value;
+  const password2 = document.getElementById('suPassword2').value;
+
+  if (!username || !password) { renderSignup('نام کاربری و رمز عبور را وارد کنید.'); return; }
+  if (password.length < 6) { renderSignup('رمز عبور باید حداقل ۶ کاراکتر باشد.'); return; }
+  if (password !== password2) { renderSignup('تکرار رمز عبور مطابقت ندارد.'); return; }
+
+  const btn = document.getElementById('signupBtn');
+  btn.disabled = true; btn.textContent = 'در حال ثبت‌نام…';
+
+  try {
+    const existing = await db.collection('usernames').doc(username).get();
+    if (existing.exists) { renderSignup('این نام کاربری قبلاً استفاده شده.'); return; }
+
+    const email = username + '@raspina.local';
+    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    const uid = cred.user.uid;
+
+    await db.collection('usernames').doc(username).set({ email });
+    await db.collection('users').doc(uid).set({
+      username, displayName, roleId: 'user', active: false,
+      assignedProjectIds: [], assignedChecklistCategoryIds: [],
+    });
+    // بعد از این، onAuthStateChanged خودش صفحه‌ی «در انتظار تایید» را نشان می‌دهد.
+  } catch (err) {
+    console.error(err);
+    let msg = 'ثبت‌نام ناموفق بود.';
+    if (err.code === 'auth/email-already-in-use') msg = 'این نام کاربری قبلاً استفاده شده.';
+    renderSignup(msg);
+  }
 }
 
 async function doLogin() {
@@ -99,8 +157,8 @@ function renderBlocked() {
   appEl.innerHTML = `
     <div class="center-screen">
       <img src="./icon-192.png" alt="راسپینا">
-      <h2>دسترسی فعال نیست</h2>
-      <p>حساب کاربری شما در حال حاضر غیرفعال است. با مدیر سیستم تماس بگیرید.</p>
+      <h2>در انتظار تایید مدیر</h2>
+      <p>حساب کاربری شما هنوز توسط مدیر سیستم تایید یا فعال نشده است. لطفاً بعداً دوباره امتحان کنید یا با مدیر تماس بگیرید.</p>
     </div>
   `;
 }
